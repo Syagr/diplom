@@ -1,0 +1,26 @@
+{
+  "name": "autoassist",
+  "private": true,
+  "packageManager": "pnpm@9",
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "format": "pnpm -r run format",
+    "typecheck": "pnpm -r run typecheck",
+    "db:push": "pnpm --filter api prisma db push",
+    "db:migrate": "pnpm --filter api prisma migrate dev",
+    "db:generate": "pnpm --filter api prisma generate",
+    "contracts:compile": "pnpm --filter contracts compile",
+    "contracts:test": "pnpm --filter contracts test",
+    "contracts:deploy": "pnpm --filter contracts deploy",
+    "start:infra": "cd infra/compose && docker compose up -d",
+    "stop:infra": "cd infra/compose && docker compose down",
+    "setup": "pnpm i && pnpm db:generate && pnpm db:push && pnpm start:infra"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.17",
+    "prettier": "^3.2.5",
+    "typescript": "^5.6.2"
+  }
+}

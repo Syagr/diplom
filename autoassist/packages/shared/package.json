@@ -1,0 +1,31 @@
+{
+  "name": "@autoassist/shared",
+  "version": "1.0.0",
+  "description": "Shared types, interfaces, and utilities for AutoAssist+ platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "autoassist",
+    "shared",
+    "types",
+    "utilities"
+  ],
+  "author": "AutoAssist+ Team",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "rimraf": "^5.0.5"
+  },
+  "peerDependencies": {
+    "zod": "^3.22.4"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  }
+}
