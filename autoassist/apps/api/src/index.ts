@@ -6,10 +6,10 @@ import { createServer } from 'http';
 import { Server, Socket } from 'socket.io';
 import { z } from 'zod';
 import { PrismaClient } from '@prisma/client';
-import { attachments } from './routes/attachments.routes';
-import { insurance } from './routes/insurance.routes.new';
-import { tow } from './routes/tow.routes.new';
-import { payments } from './routes/payments.routes.new';
+import { attachmentsRouter } from './routes/attachments.routes.js';
+import { insurance } from './routes/insurance.routes.new.js';
+import { tow } from './routes/tow.routes.new.js';
+import { payments } from './routes/payments.routes.new.js';
 
 const prisma = new PrismaClient();
 
@@ -101,7 +101,7 @@ app.post('/api/orders', async (req: Request, res: Response) => {
   }
 });
 
-app.use('/api/attachments', attachments);
+app.use('/api/attachments', attachmentsRouter);
 app.use('/api/insurance', insurance);
 app.use('/api/tow', tow);
 app.use('/api/payments', payments);

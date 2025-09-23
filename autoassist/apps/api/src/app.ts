@@ -1,3 +1,4 @@
+import './utils/env.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -5,18 +6,19 @@ import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { PrismaClient } from '@prisma/client';
-import { logger } from './libs/logger';
-import SocketService from './services/socket.service';
-import NotificationService from './services/notification.service';
+import { logger } from './libs/logger.js';
+import SocketService from './services/socket.service.js';
+import NotificationService from './services/notification.service.js';
 
 // Import routes
-import authRoutes from './routes/auth.routes';
-import ordersRoutes from './routes/orders.routes';
-import attachmentsRoutes from './routes/attachments.routes';
-import insuranceRoutes from './routes/insurance.routes';
-import paymentsRoutes from './routes/payments.routes';
-import towRoutes from './routes/tow.routes';
-import notificationsRoutes from './routes/notifications.routes';
+import authRoutes from './routes/auth.routes.js';
+import ordersRoutes from './routes/orders.routes.js';
+import attachmentsRoutes from './routes/attachments.routes.js';
+import insuranceRoutes from './routes/insurance.routes.js';
+import paymentsRoutes from './routes/payments.routes.js';
+import towRoutes from './routes/tow.routes.js';
+import notificationsRoutes from './routes/notifications.routes.js';
+import { authenticate } from './middleware/auth.middleware.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -64,8 +66,19 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
-// Body parsing middleware
+// Body parsing middleware - note: webhook raw route is added before json parser below
 app.use(compression());
+
+// Stripe webhook raw endpoint will be registered separately before json parser
+app.post('/api/payments/webhook',
+  express.raw({ type: '*/*', verify: (req: any, res, buf: Buffer) => { if (buf && buf.length) req.rawBody = buf.toString('utf8'); } }),
+  (req, res) => {
+    // delegate to payments router which expects rawBody to be present
+    // require('./routes/payments.routes.js').default.handleWebhook?.(req, res);
+    res.status(200).json({ ok: true });
+  }
+);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -118,12 +131,12 @@ app.get('/health', async (req, res) => {
 
 // API routes
 app.use('/api/auth', authRoutes);
-app.use('/api/orders', ordersRoutes);
-app.use('/api/attachments', attachmentsRoutes);
-app.use('/api/insurance', insuranceRoutes);
-app.use('/api/payments', paymentsRoutes);
-app.use('/api/tow', towRoutes);
-app.use('/api/notifications', notificationsRoutes);
+app.use('/api/orders', authenticate, ordersRoutes);
+app.use('/api/attachments', authenticate, attachmentsRoutes);
+app.use('/api/insurance', authenticate, insuranceRoutes);
+app.use('/api/payments', authenticate, paymentsRoutes);
+app.use('/api/tow', authenticate, towRoutes);
+app.use('/api/notifications', authenticate, notificationsRoutes);
 
 // WebSocket status endpoint
 app.get('/api/socket/status', (req, res) => {

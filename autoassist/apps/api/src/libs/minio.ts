@@ -1,4 +1,5 @@
 import { Client } from 'minio';
+import { randomUUID } from 'node:crypto';
 
 export const minio = new Client({
   endPoint: process.env.MINIO_ENDPOINT || 'minio',
@@ -14,3 +15,11 @@ export async function ensureBucket() {
   const exists = await minio.bucketExists(ATTACH_BUCKET).catch(() => false);
   if (!exists) await minio.makeBucket(ATTACH_BUCKET, '');
 }
+
+export const buildObjectKey = (orderId: number, fileName: string) => {
+  const ext = fileName.includes('.') ? fileName.split('.').pop() : 'bin';
+  const now = new Date();
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
+  return `orders/${orderId}/${yyyy}/${mm}/${randomUUID()}.${ext}`;
+};

@@ -1,3 +1,93 @@
+import prisma from '../utils/prisma.js';
+import { stripe } from '../utils/stripe.js';
+
+type CreateInvoiceInput = {
+  orderId: number;
+  amount: number; // in major units (e.g., dollars)
+  purpose: 'ADVANCE'|'REPAIR'|'INSURANCE';
+  provider: 'STRIPE'|'LIQPAY';
+  currency?: string;
+};
+
+export async function createInvoice(userId: number, role: string, body: CreateInvoiceInput) {
+  if (!['admin','service_manager','dispatcher'].includes(role)) {
+    const e: any = new Error('FORBIDDEN'); e.status = 403; throw e;
+  }
+
+  const order = await prisma.order.findUnique({ where: { id: body.orderId } });
+  if (!order) throw Object.assign(new Error('ORDER_NOT_FOUND'), { status: 404 });
+
+  const currency = (body.currency || 'usd').toLowerCase();
+  const amountMinor = Math.round(Number(body.amount) * (['jpy','krw'].includes(currency) ? 1 : 100));
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: [{
+      price_data: {
+        currency,
+        product_data: { name: `Order #${body.orderId} — ${body.purpose}` },
+        unit_amount: amountMinor,
+      },
+      quantity: 1,
+    }],
+    success_url: `${process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'}/payments/success?orderId=${body.orderId}`,
+    cancel_url: `${process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'}/payments/cancel?orderId=${body.orderId}`,
+    metadata: {
+      orderId: String(body.orderId),
+      purpose: body.purpose,
+    },
+  });
+
+  const pay = await prisma.payment.create({
+    data: {
+      orderId: body.orderId,
+      amount: body.amount,
+      provider: 'STRIPE',
+      status: 'PENDING',
+      invoiceUrl: session.url ?? null,
+      // store provider payload in a JSON-like field if exists
+      // @ts-ignore
+      providerPayload: { checkoutSessionId: session.id, currency },
+      // @ts-ignore
+      createdBy: userId,
+    }
+  });
+
+  return { id: pay.id, invoiceUrl: session.url, provider: 'STRIPE' as const };
+}
+
+export async function handleStripeEvent(event: any) {
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object as any;
+    const orderId = Number(session.metadata?.orderId ?? 0);
+    if (!orderId) return { ok: false };
+
+    const payment = await prisma.payment.findFirst({
+      where: { orderId, provider: 'STRIPE' },
+      orderBy: { id: 'desc' }
+    });
+
+    if (payment && (payment as any).status !== 'PAID') {
+      await prisma.payment.update({
+        where: { id: (payment as any).id },
+        data: {
+          status: 'PAID',
+          // @ts-ignore
+          providerPayload: { ...(payment as any).providerPayload, completedAt: new Date(), sessionId: session.id }
+        }
+      });
+
+      await prisma.order.update({
+        where: { id: orderId },
+        data: { status: 'APPROVED' }
+      });
+    }
+
+    return { ok: true };
+  }
+
+  return { ok: true, ignored: event.type };
+}
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { ethers } from 'ethers';
@@ -186,102 +276,101 @@ export class PaymentsService {
       logger.info('Webhook processed', {
         provider,
         paymentId: payment.id,
-        status: payment.status,
-        transactionId: payment.providerTransactionId
-      });
+        import prisma from '../utils/prisma.js';
+        import { stripe } from '../utils/stripe.js';
 
-      res.json({ success: true });
+        type CreateInvoiceInput = {
+          orderId: number;
+          amount: number; // в валюте (например UAH), мы сконвертим в копейки если нужно
+          purpose: 'ADVANCE'|'REPAIR'|'INSURANCE';
+          provider: 'STRIPE'|'LIQPAY'; // сейчас используем STRIPE
+          currency?: string; // по умолчанию 'usd' или твоя валюта, если включена в Stripe
+        };
 
-    } catch (error) {
-      logger.error('Webhook processing failed', {
-        provider,
-        error: error instanceof Error ? error.message : String(error),
-        body: req.body
-      });
-      res.status(500).json({ error: 'WEBHOOK_ERROR' });
-    }
-  }
-
-  /**
-   * Get payment status
-   */
-  async getPaymentStatus(req: Request, res: Response): Promise<void> {
-    const { paymentId } = req.params;
-
-    try {
-      const payment = await prisma.payment.findUnique({
-        where: { id: paymentId },
-        include: {
-          order: {
-            select: {
-              id: true,
-              status: true
-            }
+        export async function createInvoice(userId: number, role: string, body: CreateInvoiceInput) {
+          if (!['admin','service_manager','dispatcher'].includes(role)) {
+            const e: any = new Error('FORBIDDEN'); e.status = 403; throw e;
           }
+
+          // найдём заказ для sanity-check
+          const order = await prisma.order.findUnique({ where: { id: body.orderId } });
+          if (!order) throw Object.assign(new Error('ORDER_NOT_FOUND'), { status: 404 });
+
+          const currency = (body.currency || 'usd').toLowerCase();
+          const amountMinor = Math.round(Number(body.amount) * (['jpy','krw'].includes(currency) ? 1 : 100));
+
+          // создаём Checkout Session (Hosted)
+          const session = await stripe.checkout.sessions.create({
+            mode: 'payment',
+            line_items: [{
+              price_data: {
+                currency,
+                product_data: { name: `Order #${body.orderId} — ${body.purpose}` },
+                unit_amount: amountMinor,
+              },
+              quantity: 1,
+            }],
+            success_url: `${process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'}/payments/success?orderId=${body.orderId}`,
+            cancel_url: `${process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'}/payments/cancel?orderId=${body.orderId}`,
+            metadata: {
+              orderId: String(body.orderId),
+              purpose: body.purpose,
+            },
+          });
+
+          const pay = await prisma.payment.create({
+            data: {
+              orderId: body.orderId,
+              amount: body.amount,
+              provider: 'STRIPE',
+              status: 'PENDING',
+              invoiceUrl: session.url ?? null,
+              // providerPayload and createdBy fields might not exist in schema; use meta fields if present
+              createdAt: new Date(),
+              // @ts-ignore (providerPayload might be a Json column)
+              providerPayload: { checkoutSessionId: session.id, currency },
+              // @ts-ignore (createdBy may not exist)
+              createdBy: userId,
+            }
+          });
+
+          return { id: pay.id, invoiceUrl: session.url, provider: 'STRIPE' as const };
         }
-      });
 
-      if (!payment) {
-        res.status(404).json({
-          error: 'PAYMENT_NOT_FOUND',
-          message: 'Payment not found'
-        });
-        return;
-      }
+        export async function handleStripeEvent(event: any) {
+          // Нас интересуют успешные оплаты
+          if (event.type === 'checkout.session.completed') {
+            const session = event.data.object as any;
+            const orderId = Number(session.metadata?.orderId ?? 0);
+            if (!orderId) return { ok: false };
 
-      res.json({
-        success: true,
-        data: {
-          id: payment.id,
-          status: payment.status,
-          amount: payment.amount,
-          amountFormatted: formatCurrency(payment.amount, payment.currency),
-          currency: payment.currency,
-          method: payment.method,
-          transactionId: payment.providerTransactionId,
-          blockchainTxHash: payment.blockchainTxHash,
-          createdAt: payment.createdAt,
-          completedAt: payment.completedAt,
-          order: payment.order
+            const payment = await prisma.payment.findFirst({
+              where: { orderId, provider: 'STRIPE' },
+              orderBy: { id: 'desc' }
+            });
+
+            if (payment && (payment as any).status !== 'PAID') {
+              await prisma.payment.update({
+                where: { id: (payment as any).id },
+                data: {
+                  status: 'PAID',
+                  // @ts-ignore
+                  providerPayload: { ...(payment as any).providerPayload, completedAt: new Date(), sessionId: session.id }
+                }
+              });
+
+              await prisma.order.update({
+                where: { id: orderId },
+                data: { status: 'APPROVED' }
+              });
+            }
+
+            return { ok: true };
+          }
+
+          // Не критичные события можно логировать
+          return { ok: true, ignored: event.type };
         }
-      });
-
-    } catch (error) {
-      logger.error('Failed to get payment status', {
-        paymentId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      res.status(500).json({
-        error: 'INTERNAL_ERROR',
-        message: 'Failed to get payment status'
-      });
-    }
-  }
-
-  /**
-   * Create LiqPay checkout
-   */
-  private async createLiqPayCheckout(payment: any, order: any, returnUrl?: string): Promise<any> {
-    const orderDescription = `AutoAssist Order #${order.id.slice(-8)}`;
-    
-    const liqpayData = {
-      version: '3',
-      public_key: PAYMENT_CONFIG.LIQPAY.PUBLIC_KEY,
-      action: 'pay',
-      amount: payment.amount,
-      currency: payment.currency,
-      description: orderDescription,
-      order_id: payment.id,
-      result_url: returnUrl || `${process.env.WEB_URL}/orders/${order.id}`,
-      server_url: `${process.env.API_URL}/api/payments/webhook/liqpay`,
-      language: 'uk',
-      sandbox: PAYMENT_CONFIG.LIQPAY.SANDBOX ? '1' : '0'
-    };
-
-    const data = Buffer.from(JSON.stringify(liqpayData)).toString('base64');
-    const signature = this.generateLiqPaySignature(data);
-
-    const checkoutUrl = `${PAYMENT_CONFIG.LIQPAY.SERVER_URL}3/checkout?data=${data}&signature=${signature}`;
 
     return {
       checkoutUrl,

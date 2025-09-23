@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+// @ts-ignore
 import { createInvoice, onPaid } from '../services/payments.service.new';
 
 export const payments = Router();

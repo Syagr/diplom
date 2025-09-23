@@ -15,6 +15,7 @@ model Client {
   tgUserId  String?   @unique
   vehicles  Vehicle[]
   orders    Order[]
+  users     User[]
   loyaltyPoints Int   @default(0)
   rating    Float?
   achievements UserAchievement[]
@@ -22,6 +23,27 @@ model Client {
   updatedAt DateTime  @updatedAt
 
   @@map("clients")
+}
+
+enum Role {
+  admin
+  service_manager
+  dispatcher
+  mechanic
+  customer
+}
+
+model User {
+  id            Int       @id @default(autoincrement())
+  email         String?   @unique
+  phone         String?   @unique
+  passwordHash  String
+  role          Role      @default(customer)
+  clientId      Int?
+  client        Client?   @relation(fields: [clientId], references: [id])
+  tokenVersion  Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }
 
 model Vehicle {
@@ -218,8 +240,23 @@ model Attachment {
   meta      Json?          // metadata (dimensions, duration, etc.)
   createdAt DateTime       @default(now())
   order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // new fields (extended)
+  objectKey  String?        @db.Text
+  contentType String?
+  status      AttachmentStatus @default(pending)
+  removedAt   DateTime?
+  createdBy   Int?
+
+  @@index([orderId])
+  @@index([status])
 
   @@map("attachments")
+}
+
+enum AttachmentStatus {
+  pending
+  ready
+  removed
 }
 
 model OrderTimeline {
