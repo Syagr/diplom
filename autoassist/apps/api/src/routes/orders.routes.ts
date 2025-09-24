@@ -2,34 +2,29 @@ import { Router, Request, Response } from 'express';
 // @ts-ignore - resolved at runtime via ts-node/NodeNext; keep import without explicit type file
 import orderService from '../services/order.service.new';
 import { OrderStatus } from '@prisma/client';
+import { validate } from '../utils/validate.js';
+import { GetOrdersQuery, OrderIdParam, UpdateOrderStatusBody } from '../validators/orders.schema.js';
 
 const router = Router();
 // using default exported instance from service
 
 // GET /orders - получить список заказов пользователя
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', validate(GetOrdersQuery, 'query'), async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
+    const { status, page, limit, category } = req.query as any;
 
-    const { status, page = 1, limit = 10 } = req.query;
-    
-    const filters: any = { clientId: parseInt(userId) };
+  const filters: any = { clientId: Number(userId) };
     if (status && typeof status === 'string') {
-      // Валидация статуса
       const validStatuses: OrderStatus[] = ['NEW', 'TRIAGE', 'QUOTE', 'APPROVED', 'SCHEDULED', 'INSERVICE', 'READY', 'DELIVERED', 'CLOSED', 'CANCELLED'];
-      if (validStatuses.includes(status as OrderStatus)) {
-        filters.status = status as OrderStatus;
-      }
+      if (validStatuses.includes(status as OrderStatus)) filters.status = status as OrderStatus;
     }
+    if (category) filters.category = category;
 
-    const orders = await orderService.getOrdersWithPagination(
-      filters,
-      parseInt(page as string),
-      parseInt(limit as string)
-    );
+    const orders = await orderService.getOrdersWithPagination(filters, Number(page), Number(limit));
 
     res.json(orders);
   } catch (error) {
@@ -39,10 +34,10 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // GET /orders/:id - получить конкретный заказ
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', validate(OrderIdParam, 'params'), async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
-    const orderId = req.params.id;
+    const orderId = (req.params as any).id;
 
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -55,7 +50,7 @@ router.get('/:id', async (req: Request, res: Response) => {
     }
 
     // Проверяем права доступа
-    if (order.clientId !== parseInt(userId)) {
+    if (order.clientId !== Number(userId)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -67,11 +62,11 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // PUT /orders/:id/status - обновить статус заказа
-router.put('/:id/status', async (req: Request, res: Response) => {
+router.put('/:id/status', validate(OrderIdParam, 'params'), validate(UpdateOrderStatusBody, 'body'), async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
     const orderId = req.params.id;
-    const { status } = req.body;
+    const { status } = req.body as any;
 
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -79,9 +74,7 @@ router.put('/:id/status', async (req: Request, res: Response) => {
 
     // Валидация статуса
     const validStatuses: OrderStatus[] = ['NEW', 'TRIAGE', 'QUOTE', 'APPROVED', 'SCHEDULED', 'INSERVICE', 'READY', 'DELIVERED', 'CLOSED', 'CANCELLED'];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: 'Invalid status' });
-    }
+    if (!validStatuses.includes(status as OrderStatus)) return res.status(400).json({ error: 'Invalid status' });
 
     const order = await orderService.getOrderById(orderId);
     
@@ -90,7 +83,7 @@ router.put('/:id/status', async (req: Request, res: Response) => {
     }
 
     // Проверяем права доступа - только клиент может обновлять некоторые статусы
-    if (order.clientId !== parseInt(userId)) {
+    if (order.clientId !== Number(userId)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -103,32 +96,21 @@ router.put('/:id/status', async (req: Request, res: Response) => {
 });
 
 // GET /orders/provider/list - список заказов для сервисных центров
-router.get('/provider/list', async (req: Request, res: Response) => {
+router.get('/provider/list', validate(GetOrdersQuery, 'query'), async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
-
-    const { status, page = 1, limit = 10, category } = req.query;
-    
+    const { status, page, limit, category } = req.query as any;
     const filters: any = {};
     if (status && typeof status === 'string') {
       const validStatuses: OrderStatus[] = ['NEW', 'TRIAGE', 'QUOTE', 'APPROVED', 'SCHEDULED', 'INSERVICE', 'READY', 'DELIVERED', 'CLOSED', 'CANCELLED'];
-      if (validStatuses.includes(status as OrderStatus)) {
-        filters.status = status as OrderStatus;
-      }
+      if (validStatuses.includes(status as OrderStatus)) filters.status = status as OrderStatus;
     }
+    if (category) filters.category = category;
 
-    if (category && typeof category === 'string') {
-      filters.category = category;
-    }
-
-    const orders = await orderService.getOrdersWithPagination(
-      filters,
-      parseInt(page as string),
-      parseInt(limit as string)
-    );
+    const orders = await orderService.getOrdersWithPagination(filters, Number(page), Number(limit));
 
     res.json(orders);
   } catch (error) {

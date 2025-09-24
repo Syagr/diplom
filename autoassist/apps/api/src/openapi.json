@@ -1,0 +1,22 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "AutoAssist API", "version": "1.0.0" },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/api/auth/login": { "post": { "summary": "Login", "requestBody": { "required": true }, "responses": { "200": { "description": "OK" }}} },
+    "/api/auth/refresh": { "post": { "responses": { "200": { "description": "OK" }}} },
+    "/api/payments/invoice": { "post": { "responses": { "201": { "description": "Created" }}} },
+  "/api/payments/webhook": { "post": { "security": [], "responses": { "200": { "description": "OK" }}} },
+    "/api/attachments/presign-upload": { "post": { "responses": { "200": { "description": "OK" }}} },
+    "/api/attachments/{id}/presign": { "get": { "parameters": [{ "in": "path", "name": "id", "required": true }], "responses": { "200": { "description": "OK" }}} }
+  }
+}

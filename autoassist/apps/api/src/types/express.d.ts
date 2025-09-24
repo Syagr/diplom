@@ -1,3 +1,10 @@
+import 'express-serve-static-core';
+
+declare module 'express-serve-static-core' {
+  interface Request {
+    rawBody?: string; // для Stripe webhook в raw-парсере
+  }
+}
 import { Request as ExpressRequest } from 'express';
 import 'express-serve-static-core';
 import type { Server as IOServer } from 'socket.io';

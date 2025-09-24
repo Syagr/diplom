@@ -99,6 +99,9 @@ model Order {
   client      Client      @relation(fields: [clientId], references: [id])
   vehicle     Vehicle     @relation(fields: [vehicleId], references: [id])
 
+  @@index([clientId])
+  @@index([status])
+
   @@map("orders")
 }
 
@@ -162,6 +165,8 @@ model Payment {
   order      Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@map("payments")
+  @@index([orderId])
+  @@index([status])
 }
 
 enum TowStatus {
@@ -251,6 +256,17 @@ model Attachment {
   @@index([status])
 
   @@map("attachments")
+}
+
+// Webhook events to ensure idempotent processing
+model WebhookEvent {
+  id         String   @id
+  type       String
+  receivedAt DateTime @default(now())
+  payload    Json?
+  handled    Boolean  @default(false)
+
+  @@map("webhook_events")
 }
 
 enum AttachmentStatus {

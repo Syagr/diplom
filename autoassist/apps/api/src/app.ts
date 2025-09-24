@@ -2,6 +2,10 @@ import './utils/env.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import swaggerUi from 'swagger-ui-express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
@@ -15,7 +19,7 @@ import authRoutes from './routes/auth.routes.js';
 import ordersRoutes from './routes/orders.routes.js';
 import attachmentsRoutes from './routes/attachments.routes.js';
 import insuranceRoutes from './routes/insurance.routes.js';
-import paymentsRoutes from './routes/payments.routes.js';
+import paymentsRoutes, { stripeWebhookHandler } from './routes/payments.routes.js';
 import towRoutes from './routes/tow.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import { authenticate } from './middleware/auth.middleware.js';
@@ -58,9 +62,40 @@ const limiter = rateLimit({
 
 app.use('/api/', limiter);
 
+// Additional global security middleware per final-shrug request
+app.use(helmet());
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
+
+// Lightweight healthz endpoint
+app.get('/healthz', (_req, res) => {
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+    uptimeSec: Math.round(process.uptime()),
+  });
+});
+
+// Swagger UI (static openapi.json)
+try {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const specPath = path.join(__dirname, 'openapi.json');
+  if (fs.existsSync(specPath)) {
+    const openapiSpec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
+    app.use('/_docs', swaggerUi.serve, swaggerUi.setup(openapiSpec));
+  }
+} catch (err) {
+  logger.warn('Failed to mount Swagger UI', { error: err instanceof Error ? err.message : String(err) });
+}
+
 // CORS configuration
+// CORS whitelist from env (comma-separated)
+const ALLOWED_ORIGINS = (process.env.CORS_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000', 'http://localhost:3001'],
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // allow curl/postman
+    if (ALLOWED_ORIGINS.length === 0) return cb(null, true); // permissive for dev if not set
+    return ALLOWED_ORIGINS.includes(origin) ? cb(null, true) : cb(new Error('CORS_NOT_ALLOWED'), false);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -70,13 +105,11 @@ app.use(cors({
 app.use(compression());
 
 // Stripe webhook raw endpoint will be registered separately before json parser
+const rawBodySaver = (req: any, _res: any, buf: Buffer) => { if (buf && buf.length) req.rawBody = buf.toString('utf8'); };
+
 app.post('/api/payments/webhook',
-  express.raw({ type: '*/*', verify: (req: any, res, buf: Buffer) => { if (buf && buf.length) req.rawBody = buf.toString('utf8'); } }),
-  (req, res) => {
-    // delegate to payments router which expects rawBody to be present
-    // require('./routes/payments.routes.js').default.handleWebhook?.(req, res);
-    res.status(200).json({ ok: true });
-  }
+  express.raw({ type: '*/*', verify: rawBodySaver }),
+  stripeWebhookHandler
 );
 
 app.use(express.json({ limit: '10mb' }));
@@ -158,23 +191,25 @@ app.use('*', (req, res) => {
 });
 
 // Global error handler
-app.use((error: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+// Centralized error handler - normalize to { error: { code, message } }
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   logger.error('Unhandled application error', {
-    error: error.message,
-    stack: error.stack,
+    code: err.code || err.name,
+    message: err.message,
+    stack: err.stack,
     url: req.url,
-    method: req.method,
-    body: req.body
+    method: req.method
   });
 
-  // Don't leak error details in production
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  
-  res.status(error.status || 500).json({
-    error: 'INTERNAL_SERVER_ERROR',
-    message: isDevelopment ? error.message : 'An internal server error occurred',
-    ...(isDevelopment && { stack: error.stack })
-  });
+  const status = err.status || (err.name === 'UnauthorizedError' ? 401 : 500);
+  const code = err.code || (
+    status === 401 ? 'UNAUTHORIZED' :
+    status === 403 ? 'FORBIDDEN' :
+    status === 404 ? 'NOT_FOUND' :
+    status === 422 ? 'VALIDATION_ERROR' : 'INTERNAL'
+  );
+
+  res.status(status).json({ error: { code, message: err.message ?? String(err) } });
 });
 
 // Graceful shutdown

@@ -21,6 +21,8 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
+  "worker:cleanup": "ts-node src/workers/attachmentsCleanup.worker.ts",
+  "worker:previews": "ts-node src/workers/previews.worker.ts",
     "docker:build": "docker build -t autoassist-api .",
     "docker:run": "docker run -p 3001:3001 autoassist-api"
   },

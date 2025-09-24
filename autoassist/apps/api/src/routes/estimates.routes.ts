@@ -1,14 +1,16 @@
 import { Router, Request, Response } from 'express';
 // @ts-ignore
 import estimateService from '../services/estimate.service.new';
+import { validate } from '../utils/validate.js';
+import { CreateEstimateBody, EstimateIdParam } from '../validators/estimates.schema.js';
 
 const router = Router();
 
 // GET /estimates/:orderId - получить оценку по заказу
-router.get('/:orderId', async (req: Request, res: Response) => {
+router.get('/:orderId', validate(EstimateIdParam, 'params'), async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { orderId } = req.params;
+    const { id: orderId } = req.params as any;
 
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -21,7 +23,7 @@ router.get('/:orderId', async (req: Request, res: Response) => {
     }
 
     // Проверяем права доступа - только клиент заказа может видеть оценку
-    if (estimate.order.clientId !== parseInt(userId)) {
+    if (estimate.order.clientId !== Number(userId)) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -33,7 +35,7 @@ router.get('/:orderId', async (req: Request, res: Response) => {
 });
 
 // POST /estimates - создать новую оценку
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', validate(CreateEstimateBody, 'body'), async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
     
@@ -43,27 +45,15 @@ router.post('/', async (req: Request, res: Response) => {
 
     const {
       orderId,
-      laborCost,
-      partsCost,
-      totalCost,
-      estimatedDays,
-      description,
-      breakdown
-    } = req.body;
+      lines,
+      total
+    } = req.body as any;
 
     // Валидация обязательных полей
-    if (!orderId || !totalCost) {
-      return res.status(400).json({ error: 'Missing required fields: orderId, totalCost' });
-    }
-
     const estimate = await estimateService.createEstimate({
-      orderId: parseInt(orderId),
-      laborCost: laborCost || 0,
-      partsCost: partsCost || 0,
-      totalCost: parseFloat(totalCost),
-      estimatedDays: estimatedDays || null,
-      description: description || null,
-      breakdown: breakdown || null
+      orderId: Number(orderId),
+      lines,
+      total
     });
 
     res.status(201).json(estimate);
@@ -77,10 +67,10 @@ router.post('/', async (req: Request, res: Response) => {
 });
 
 // PUT /estimates/:id - обновить оценку
-router.put('/:id', async (req: Request, res: Response) => {
+router.put('/:id', validate(EstimateIdParam, 'params'), async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { id } = req.params;
+  const { id } = req.params as any;
 
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -95,13 +85,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       breakdown
     } = req.body;
 
-    const updateData: any = {};
-    if (laborCost !== undefined) updateData.laborCost = parseFloat(laborCost);
-    if (partsCost !== undefined) updateData.partsCost = parseFloat(partsCost);
-    if (totalCost !== undefined) updateData.totalCost = parseFloat(totalCost);
-    if (estimatedDays !== undefined) updateData.estimatedDays = estimatedDays;
-    if (description !== undefined) updateData.description = description;
-    if (breakdown !== undefined) updateData.breakdown = breakdown;
+  const updateData: any = req.body;
 
     const estimate = await estimateService.updateEstimate(parseInt(id), updateData);
     
@@ -117,16 +101,16 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 // DELETE /estimates/:id - удалить оценку
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', validate(EstimateIdParam, 'params'), async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id;
-    const { id } = req.params;
+    const { id } = req.params as any;
 
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const deleted = await estimateService.deleteEstimate(parseInt(id));
+    const deleted = await estimateService.deleteEstimate(Number(id));
     
     if (!deleted) {
       return res.status(404).json({ error: 'Estimate not found' });

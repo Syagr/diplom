@@ -1,5 +1,6 @@
 import prisma from '../utils/prisma.js';
 import { minio, ATTACH_BUCKET, ensureBucket, buildObjectKey } from '../libs/minio.js';
+import { previewsQ, cleanupQ } from '../queues/index.js';
 import { PresignUploadBody } from '../validators/attachments.schema.js';
 import { canReadOrder, canWriteAttachment } from '../utils/rbac.js';
 
@@ -65,6 +66,8 @@ export async function completeUpload(userId: number, role: string, attachmentId:
     where: { id: attachmentId },
     data: { status: 'ready' }
   });
+  // enqueue preview generation
+  try { await previewsQ.add('make-preview', { attachmentId }, { attempts: 3, removeOnComplete: 100, removeOnFail: 200 }); } catch (e) { /* swallow */ }
   return { ok: true };
 }
 
@@ -128,6 +131,15 @@ export async function removeAttachment(userId: number, role: string, attachmentI
     where: { id: attachmentId },
     data: { removedAt: new Date(), status: 'removed' }
   });
+
+  // schedule cleanup of object from storage
+  try {
+    const delayDays = Number(process.env.ATTACH_CLEANUP_AFTER_DAYS || 7);
+    const delayMs = delayDays * 24 * 60 * 60 * 1000;
+    if (att.objectKey) {
+      await cleanupQ.add('cleanup-object', { objectKey: att.objectKey, attachmentId: att.id }, { delay: delayMs, attempts: 3, removeOnComplete: 100, removeOnFail: 200 });
+    }
+  } catch (e) { /* swallow */ }
 
   return { ok: true };
 }

@@ -4,10 +4,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { attachments } from './routes/attachments.routes';
-import { insurance } from './routes/insurance.routes.new';
-import { tow } from './routes/tow.routes.new';
-import { payments } from './routes/payments.routes.new';
+// @ts-nocheck
+import { attachments } from './routes/attachments.routes.js';
+import { insurance } from './routes/insurance.routes.new.js';
+import { tow } from './routes/tow.routes.new.js';
+import { payments } from './routes/payments.routes.new.js';
 
 const app = express();
 app.use(helmet());

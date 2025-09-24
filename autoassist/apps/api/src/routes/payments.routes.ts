@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { createInvoice, handleStripeEvent } from '../services/payments.service.js';
 import { stripe } from '../utils/stripe.js';
+import { BadRequest } from '../utils/httpError.js';
 
-const paymentsRouter = Router();
+export const paymentsRouter = Router();
 
 const getAuth = (req: any) => ({ userId: Number(req.user?.id ?? 0), role: String(req.user?.role ?? 'customer') });
 
@@ -20,26 +21,26 @@ paymentsRouter.post('/invoice', async (req, res, next) => {
     const body = CreateInvoiceBody.parse(req.body);
     const { userId, role } = getAuth(req);
     if (body.provider !== 'STRIPE') {
-      const e: any = new Error('ONLY_STRIPE_IMPLEMENTED'); e.status = 400; throw e;
+      return next(BadRequest('ONLY_STRIPE_IMPLEMENTED'));
     }
-    const data = await createInvoice(userId, role, body as any);
+  const data = await createInvoice(userId, role, body as any);
     res.status(201).json(data);
   } catch (e) { next(e); }
 });
 
-// Webhook handler will be registered as raw route in app.ts
-paymentsRouter.post('/webhook', (req, res) => {
+// >>>> НОВОЕ: экспортируем чистый обработчик вебхука <<<<
+export function stripeWebhookHandler(req: any, res: any, next: any) {
   try {
     const sig = req.headers['stripe-signature'];
     if (!sig || Array.isArray(sig)) {
-      const e: any = new Error('SIGNATURE_MISSING'); e.status = 400; throw e;
+      return next(BadRequest('SIGNATURE_MISSING'));
     }
     const secret = process.env.STRIPE_WEBHOOK_SECRET!;
-    const event = stripe.webhooks.constructEvent((req as any).rawBody, sig, secret);
+    const event = stripe.webhooks.constructEvent(req.rawBody as string, sig, secret);
     handleStripeEvent(event)
       .then(result => res.json(result))
-      .catch(err => res.status(500).json({ error: 'WEBHOOK_HANDLER_ERROR', detail: String(err) }));
-  } catch (e) { res.status(400).json({ error: 'WEBHOOK_INVALID', message: (e as any).message }); }
-});
+      .catch(next);
+  } catch (e) { next(e); }
+}
 
 export default paymentsRouter;

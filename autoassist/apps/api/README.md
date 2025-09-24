@@ -1,3 +1,107 @@
+# Быстрый запуск API (5 минут)
+
+Короткая дорожка чтобы "запустилось и работает" (A → B → C → опц. D).
+
+A) Установить зависимости + Prisma
+
+Откройте терминал в `apps/api` и выполните (PowerShell):
+
+```powershell
+Set-Location 'c:\IT\projects\diplom\autoassist\apps\api'
+pnpm install
+pnpm add stripe bullmq ioredis swagger-ui-express
+npx prisma generate
+# или применить миграции:
+npx prisma migrate deploy    # production style
+# или для разработки:
+npx prisma migrate dev --name final
+```
+
+Убедитесь, что в `apps/api/.env` (или окружении) заданы:
+
+- `DATABASE_URL`
+- `JWT_SECRET`, `JWT_REFRESH_SECRET`
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`
+- `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`
+- `REDIS_HOST`, `REDIS_PORT` (или `REDIS_URL`)
+- `PORT` (например `3000`), `PUBLIC_BASE_URL`
+- `ATTACH_CLEANUP_AFTER_DAYS` (опционально)
+
+B) Type-check
+
+```powershell
+npx tsc --noEmit
+```
+
+Если TypeScript продолжает ругаться на Prisma-типы — повторите `npx prisma generate` и перезапустите IDE.
+
+C) Запуск API + воркеров
+
+```powershell
+pnpm run dev               # запускает API (локально)
+pnpm run worker:previews   # воркер для превью
+pnpm run worker:cleanup    # воркер для удаления объектов
+```
+
+(Опционально) D) Быстрые smoke-тесты
+
+1) Auth — создайте админа в БД (например, хеш пароля `pass123`) и выполните логин:
+
+```powershell
+curl -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"pass123"}'
+```
+
+2) Attachments (пример с JPEG)
+
+# Получить presign URL
+```powershell
+curl -s -X POST http://localhost:3000/api/attachments/presign-upload \
+  -H "Authorization: Bearer <ACCESS>" -H "Content-Type: application/json" \
+  -d '{"orderId":1,"fileName":"left.jpg","contentType":"image/jpeg","size":524288,"kind":"photo"}'
+```
+
+# PUT на `putUrl` из ответа, затем отметить загрузку завершённой
+```powershell
+curl -s -X POST http://localhost:3000/api/attachments/<ATT_ID>/complete \
+  -H "Authorization: Bearer <ACCESS>"
+```
+
+В логах воркера `previews` увидите задачу и в БД появится `meta.previewReady = true`.
+
+3) Payments (Stripe)
+
+Запустите локальный слушатель Stripe (CLI) и форвардьте на webhook:
+
+```powershell
+stripe listen --forward-to localhost:3000/api/payments/webhook
+```
+
+Создать invoice:
+
+```powershell
+curl -s -X POST http://localhost:3000/api/payments/invoice \
+  -H "Authorization: Bearer <ACCESS>" -H "Content-Type: application/json" \
+  -d '{"orderId":1,"amount":1200,"purpose":"REPAIR","provider":"STRIPE","currency":"usd"}'
+```
+
+Перейдите по `invoiceUrl`, оплатите — webhook проставит `Payment=PAID` и обновит `Order`.
+
+Частые проблемы и быстрые исправления
+
+- ESM import errors: убедитесь, что все относительные импорты в `apps/api/src` имеют расширение `.js`. Если всё ещё падает — можно применить автопатч (я помогу).
+- Webhook 400: raw-парсер для webhook должен стоять до `express.json()` (в проекте это сделано) и нужен корректный `STRIPE_WEBHOOK_SECRET`.
+- Redis / BullMQ: воркеры не стартуют — проверьте что Redis запущен и `REDIS_HOST/PORT` корректны.
+- Prisma types: ошибки означают, что нужно `npx prisma generate` или схема/миграции не совпадают.
+
+Хочешь, чтобы я:
+
+1. Добавил этот README (сделано) — готово.
+2. Автоматически дописал `.js` во всех относительных импортов в `apps/api/src` (автопатч) — сделаю по твоему подтверждению.
+3. Выполнил установку зависимостей + `npx prisma generate` и/или `npx tsc --noEmit` в терминале сейчас — сделаю по запросу.
+
+Если подтверждаешь, скажи: "Автопатч" для правки импортов, или укажи какую команду запустить сейчас.
 # AutoAssist+ API
 
 Comprehensive insurance and towing assistance platform API server.
@@ -63,6 +167,11 @@ src/
 ```
 
 ## Quick Start
+
+### Quick notes
+
+- A ready-to-use `.env.example` has been added to the `apps/api` folder — copy it to `.env` and edit values before running.
+- Install runtime dependencies listed earlier (`stripe`, `bullmq`, `ioredis`, `swagger-ui-express`) before starting workers.
 
 ### Prerequisites
 - Node.js 18+

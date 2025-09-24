@@ -19,3 +19,7 @@ export type PresignUploadBody = z.infer<typeof PresignUploadBody>;
 export const PresignDownloadParams = z.object({
   id: z.string(), // using string coercion; current model uses Int — we coerce in routes
 });
+
+export const AttachmentIdParam = z.object({ id: z.coerce.number().int().positive() });
+
+export type AttachmentIdParam = z.infer<typeof AttachmentIdParam>;
