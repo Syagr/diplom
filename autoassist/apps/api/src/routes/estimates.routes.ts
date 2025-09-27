@@ -1,4 +1,5 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
+import type { Request, Response } from 'express';
 // @ts-ignore
 import estimateService from '../services/estimate.service.new';
 import { validate } from '../utils/validate.js';

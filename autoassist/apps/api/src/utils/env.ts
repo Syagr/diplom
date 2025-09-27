@@ -1,3 +1,6 @@
+// Ensure .env is loaded when this module is imported during development.
+import 'dotenv/config';
+
 const need = (name: string) => {
   const v = process.env[name];
   if (!v) throw new Error(`ENV ${name} is required`);

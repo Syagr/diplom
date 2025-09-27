@@ -7,15 +7,17 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install pnpm and dependencies
+# Use pnpm to match the monorepo package manager (avoids npm ci lockfile issues)
+RUN corepack enable && corepack prepare pnpm@^9.0.0 --activate
+RUN pnpm install --frozen-lockfile=false
 
 # Copy source code
 COPY src ./src
 COPY prisma ./prisma
 
 # Generate Prisma client
-RUN npx prisma generate
+RUN pnpm prisma generate
 
 # Build application
 RUN npm run build

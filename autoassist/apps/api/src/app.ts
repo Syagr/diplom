@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import compression from 'compression';
+import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { createServer } from 'http';
 import { PrismaClient } from '@prisma/client';
@@ -27,6 +28,20 @@ import { authenticate } from './middleware/auth.middleware.js';
 const app = express();
 const httpServer = createServer(app);
 const prisma = new PrismaClient();
+
+// Diagnostic: attempt to connect to DB immediately and log the URL the process sees.
+(async () => {
+  try {
+    // Mask the password when logging
+    const raw = process.env.DATABASE_URL ?? '(not set)';
+    const masked = raw.replace(/:\/\/.+?:.+?@/, '://***:***@');
+    logger.info('Prisma startup: DATABASE_URL', { value: masked });
+    await prisma.$connect();
+    logger.info('Prisma startup: connected to database');
+  } catch (err) {
+    logger.error('Prisma startup: connection failed', { error: err instanceof Error ? err.message : String(err), stack: err?.stack });
+  }
+})();
 
 // Initialize services
 const socketService = new SocketService(httpServer);
@@ -114,6 +129,9 @@ app.post('/api/payments/webhook',
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Parse cookies so auth middleware can read access tokens from cookies when present
+app.use(cookieParser());
 
 // Request logging middleware
 app.use((req, res, next) => {

@@ -1,7 +1,7 @@
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { formatCurrency } from '@autoassist/shared';
-import { logger } from '../libs/logger';
+import { formatCurrency } from '../../../../packages/shared/dist/utils/helpers.js';
+import { logger } from '../libs/logger.js';
 
 const prisma = new PrismaClient();
 

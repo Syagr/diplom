@@ -38,8 +38,8 @@ This directory contains Docker Compose configuration for local development and t
   - Password configured via env vars
 
 - **MinIO** (`minio`): Object storage for file attachments
-  - Port: 9000 (API), 9001 (Console)
-  - Console: http://localhost:9001
+   - Port: 12002 (API/object), 12003 (Console)
+  - Console: http://localhost:12001
   - Default credentials: minioadmin/minioadmin123
 
 ### Application Services
@@ -143,10 +143,10 @@ pnpm run db:studio
 
 ### File Storage (MinIO)
 
-- Console: http://localhost:9001
-- API Endpoint: http://localhost:9000
+- Console: http://localhost:12001
+-- API Endpoint: http://localhost:12002
 - Bucket: `attachments` (auto-created)
-- Files accessible at: http://localhost:9000/attachments/filename
+- Files accessible at: http://localhost:12002/attachments/filename
 
 ## Configuration Files
 

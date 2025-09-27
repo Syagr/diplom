@@ -1,0 +1,6 @@
+(archived) Original content of index.legacy.ts
+
+This file contains the original legacy index content which was causing TypeScript parse errors
+and duplicate declarations. Kept here for reference.
+
+(If you need to restore, copy back into `src/index.legacy.ts`.)

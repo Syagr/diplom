@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { calculateDistance, formatCurrency } from '@autoassist/shared';
-import { TriageService } from '../services/triage.service';
-import { logger } from '../libs/logger';
+import { calculateDistance, formatCurrency } from '../../../../packages/shared/dist/utils/helpers.js';
+import { TriageService } from '@/services/triage.service.js';
+import { logger } from '../libs/logger.js';
 
 const router = Router();
 const prisma = new PrismaClient();

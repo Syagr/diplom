@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { createCheckout } from '../libs/liqpay';
+import { createCheckout } from '@/libs/liqpay.js';
 // import { escrow } from '../libs/ethers';
 const prisma = new PrismaClient();
 

@@ -1,9 +1,11 @@
 import 'dotenv/config';
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { createServer } from 'http';
-import { Server, Socket } from 'socket.io';
+import { Server } from 'socket.io';
+import type { Socket } from 'socket.io';
 import { z } from 'zod';
 import { PrismaClient } from '@prisma/client';
 import { attachmentsRouter } from './routes/attachments.routes.js';
@@ -66,7 +68,7 @@ app.post('/api/orders', async (req: Request, res: Response) => {
     const vehicle = await prisma.vehicle.upsert({
       where: { plate: data.vehicle.plate },
       update: { ...data.vehicle },
-      create: { clientId: client.id, ...data.vehicle }
+      create: { ...data.vehicle, client: { connect: { id: client.id } } }
     });
 
     // Create order

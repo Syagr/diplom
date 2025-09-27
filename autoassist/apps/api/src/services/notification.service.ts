@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
-import { logger } from '../libs/logger';
-import SocketService from './socket.service';
+import { logger } from '../libs/logger.js';
+import SocketService from './socket.service.js';
 
 const prisma = new PrismaClient();
 

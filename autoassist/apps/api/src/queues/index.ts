@@ -8,5 +8,5 @@ const connection = new (IORedis as any)({
 
 // экспорт очередей
 const Queue: any = _Queue as any;
-export const cleanupQ = new Queue('attachments:cleanup', { connection });
-export const previewsQ = new Queue('attachments:previews', { connection });
+export const cleanupQ = new Queue('attachments-cleanup', { connection });
+export const previewsQ = new Queue('attachments-previews', { connection });

@@ -87,7 +87,7 @@ socket.on('payment:status', data => console.log('Payment status:', data));
 
 ```env
 MINIO_ENDPOINT=localhost
-MINIO_PORT=9000
+MINIO_PORT=12002
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 MINIO_BUCKET=attachments

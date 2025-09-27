@@ -3,6 +3,7 @@ import { minio, ATTACH_BUCKET, ensureBucket, buildObjectKey } from '../libs/mini
 import { previewsQ, cleanupQ } from '../queues/index.js';
 import { PresignUploadBody } from '../validators/attachments.schema.js';
 import { canReadOrder, canWriteAttachment } from '../utils/rbac.js';
+import { AttachmentType } from '@prisma/client';
 
 const UPLOAD_TTL_SEC = 60 * 5; // 5 minutes
 const DOWNLOAD_TTL_SEC = 60 * 10; // 10 minutes
@@ -26,17 +27,31 @@ export async function presignUpload(userId: number, role: string, body: PresignU
 
   const putUrl = await minio.presignedPutObject(ATTACH_BUCKET, objectKey, UPLOAD_TTL_SEC);
 
+  // map incoming kind/file 'kind' string to Prisma AttachmentType enum
+  const rawKind = (body.kind ?? 'document').toString().toLowerCase();
+  const kindMap: Record<string, AttachmentType> = {
+    'doc': AttachmentType.DOCUMENT,
+    'document': AttachmentType.DOCUMENT,
+    'photo': AttachmentType.PHOTO,
+    'image': AttachmentType.PHOTO,
+    'video': AttachmentType.VIDEO,
+    'audio': AttachmentType.AUDIO
+  };
+  const attachmentType = kindMap[rawKind] ?? AttachmentType.DOCUMENT;
+
   const attachment = await prisma.attachment.create({
     data: {
       orderId: body.orderId,
-      type: body.kind as any,
+      type: attachmentType,
       objectKey,
       contentType: body.contentType,
       size: body.size,
       status: 'pending',
       meta: body.meta ?? {},
       createdBy: userId,
-      filename: body.fileName
+      filename: body.fileName,
+      // Prisma schema requires `url` field; set empty string for presigned (will be filled on complete if needed)
+      url: ''
     },
     select: { id: true, objectKey: true }
   });

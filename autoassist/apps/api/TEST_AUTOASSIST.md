@@ -153,7 +153,7 @@ socket.on('payment:status', (data) => console.log('Payment status:', data));
 ## Troubleshooting
 - Check Docker containers: `docker-compose ps`
 - View API logs: `docker-compose logs api`
-- Check MinIO: http://localhost:9001 (admin/password123)
+- Check MinIO: http://localhost:12003 (admin/password123)
 - Database queries: Use Prisma Studio or direct connection
 
 ## Success Criteria

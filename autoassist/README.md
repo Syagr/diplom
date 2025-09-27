@@ -92,7 +92,7 @@ pnpm dev
 
 - **Web**: http://localhost:5173
 - **API**: http://localhost:8080/health
-- **MinIO Console**: http://localhost:9001 (admin/admin)
+- **MinIO Console**: http://localhost:12003 (admin/admin)
 - **Bot**: Автоматически подключается к Telegram API
 
 ## 🏗️ Архитектура

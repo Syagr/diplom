@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { InsuranceService } from '../services/insurance.service';
+import { InsuranceService } from '@/services/insurance.service.js';
 
 const router = Router();
 const insuranceService = new InsuranceService();

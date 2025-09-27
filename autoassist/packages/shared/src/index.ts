@@ -1,13 +1,17 @@
 // Core entities
-export * from './types/entities'
-export * from './types/api'
-export * from './types/blockchain'
-export * from './types/telegram'
+// Core entities
+export * from './types/entities.js';
+export * from './types/api.js';
+export * from './types/blockchain.js';
+export * from './types/telegram.js';
 
 // Utilities
-export * from './utils/validation'
-export * from './utils/constants'
-export * from './utils/helpers'
+export * from './utils/validation.js';
+export * from './utils/constants.js';
+export * from './utils/helpers.js';
 
 // Re-export commonly used types
-export type { z } from 'zod'
+export type { z } from 'zod';
+
+// Explicit named export to ensure runtime availability
+export { formatCurrency } from './utils/helpers.js';

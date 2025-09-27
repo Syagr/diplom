@@ -1,7 +1,8 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
+import type { Request, Response } from 'express';
 // @ts-ignore - resolved at runtime via ts-node/NodeNext; keep import without explicit type file
 import orderService from '../services/order.service.new';
-import { OrderStatus } from '@prisma/client';
+import type { OrderStatus } from '@prisma/client';
 import { validate } from '../utils/validate.js';
 import { GetOrdersQuery, OrderIdParam, UpdateOrderStatusBody } from '../validators/orders.schema.js';
 

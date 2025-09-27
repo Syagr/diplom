@@ -25,7 +25,7 @@
       "@/middleware/*": ["src/middleware/*"],
       "@/types/*": ["src/types/*"],
       "@/utils/*": ["src/utils/*"],
-      "@autoassist/shared": ["../shared/src/index"]
+  "@autoassist/shared": ["src/aliases/shared.ts"]
     }
   },
   "include": [
@@ -40,7 +40,9 @@
     "dist",
     "coverage",
     "**/*.test.ts",
-    "**/*.spec.ts"
+    "**/*.spec.ts",
+    "src/**/*.legacy.ts",
+    "src/index.legacy.ts"
   ],
   "ts-node": {
     "esm": true,

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { acceptOffer, generateOffers } from '../services/insurance.service.new';
+import { acceptOffer, generateOffers } from '../services/insurance.service.new.js';
 
 export const insurance = Router();
 

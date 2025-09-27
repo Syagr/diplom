@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 export const minio = new Client({
   endPoint: process.env.MINIO_ENDPOINT || 'minio',
-  port: Number(process.env.MINIO_PORT || 9000),
+  port: Number(process.env.MINIO_PORT || 12002),
   useSSL: false,
   accessKey: process.env.MINIO_ACCESS_KEY!,
   secretKey: process.env.MINIO_SECRET_KEY!,

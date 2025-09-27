@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { assignTow, saveTowQuote, towQuote } from '../services/tow.service.new';
+import { assignTow, saveTowQuote, towQuote } from '../services/tow.service.new.js';
 
 export const tow = Router();
 
