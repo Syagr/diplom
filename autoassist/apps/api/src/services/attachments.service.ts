@@ -56,7 +56,12 @@ export async function presignUpload(userId: number, role: string, body: PresignU
     select: { id: true, objectKey: true }
   });
 
-  return { attachmentId: attachment.id, putUrl, objectKey };
+  return {
+    id: attachment.id,
+    attachmentId: attachment.id,
+    putUrl,
+    objectKey: attachment.objectKey
+  };
 }
 
 export async function completeUpload(userId: number, role: string, attachmentId: number) {
