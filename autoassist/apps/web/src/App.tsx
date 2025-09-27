@@ -4,6 +4,8 @@ import { io, Socket } from 'socket.io-client'
 import OrderForm from './components/OrderForm'
 import OrderList from './components/OrderList'
 import Header from './components/Header'
+import UploadAttachment from './components/UploadAttachment'
+import ConnectWallet from './components/ConnectWallet'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8080'
@@ -45,6 +47,23 @@ function App() {
         <Routes>
           <Route path="/" element={<OrderForm />} />
           <Route path="/orders" element={<OrderList />} />
+          <Route
+            path="/demo"
+            element={
+              <div style={{ maxWidth: 720, margin: '40px auto', display: 'grid', gap: 24 }}>
+                <h1>AutoAssist+ Demo</h1>
+                <section>
+                  <h2>Web3</h2>
+                  <ConnectWallet />
+                </section>
+                <section>
+                  <h2>Загрузка вложений</h2>
+                  {/* For demo we will perform a quick admin login and pass the token to UploadAttachment */}
+                  <DemoUploader />
+                </section>
+              </div>
+            }
+          />
           <Route path="/tg" element={<TelegramWebApp />} />
         </Routes>
       </main>
@@ -63,3 +82,27 @@ function TelegramWebApp() {
 }
 
 export default App
+
+function DemoUploader() {
+  const [token, setToken] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    (async () => {
+      if (token) return
+      try {
+        const r = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'admin@example.com', password: 'admin123' })
+        })
+        if (r.ok) {
+          const j = await r.json()
+          setToken(j.access || j.accessToken || j.token)
+        }
+      } catch (e) { /* ignore */ }
+    })()
+  }, [token])
+
+  if (!token) return <div>Логинимся…</div>
+  return <UploadAttachment token={token} orderId={1} />
+}

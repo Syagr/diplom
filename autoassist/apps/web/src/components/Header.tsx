@@ -1,4 +1,5 @@
 import React from 'react'
+import { Link } from 'react-router-dom'
 
 interface HeaderProps {
   isConnected: boolean
@@ -31,18 +32,9 @@ function Header({ isConnected }: HeaderProps) {
             </div>
             
             <nav className="flex space-x-4">
-              <a 
-                href="/" 
-                className="text-primary-600 hover:text-primary-700 font-medium"
-              >
-                Нова заявка
-              </a>
-              <a 
-                href="/orders" 
-                className="text-gray-600 hover:text-primary-700 font-medium"
-              >
-                Заявки
-              </a>
+              <Link to="/" className="text-primary-600 hover:text-primary-700 font-medium">Нова заявка</Link>
+              <Link to="/orders" className="text-gray-600 hover:text-primary-700 font-medium">Заявки</Link>
+              <Link to="/demo" className="text-gray-600 hover:text-primary-700 font-medium">Demo</Link>
             </nav>
           </div>
         </div>
