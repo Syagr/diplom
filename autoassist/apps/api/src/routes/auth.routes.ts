@@ -16,6 +16,8 @@ authRouter.post('/login', validate(loginSchema), async (req, res, next) => {
   try {
     const { email, password } = req.body;
     const tokens = await login({ email, password } as any);
+    // Set an HttpOnly cookie for access token to ease dev usage from browser
+    res.cookie('accessToken', tokens.access, { httpOnly: true, sameSite: 'lax' });
     return res.json(tokens);
   } catch (e: any) {
     // friendly messages
@@ -34,6 +36,7 @@ const regSchema = { body: z.object({
 authRouter.post('/register', validate(regSchema), async (req, res, next) => {
   try {
     const tokens = await register(req.body as any);
+    res.cookie('accessToken', tokens.access, { httpOnly: true, sameSite: 'lax' });
     return res.status(201).json(tokens);
   } catch (e: any) {
     if (e.code === 'EMAIL_TAKEN' || e.message === 'EMAIL_TAKEN') {
@@ -47,6 +50,7 @@ const refreshSchema = { body: z.object({ refresh: z.string().min(10) }) };
 authRouter.post('/refresh', validate(refreshSchema), async (req, res, next) => {
   try {
     const t = await refresh(req.body.refresh);
+    res.cookie('accessToken', t.access, { httpOnly: true, sameSite: 'lax' });
     res.json(t);
   } catch (e:any) {
     return res.status(401).json({ message: 'Неприпустимий або протермінований токен' });

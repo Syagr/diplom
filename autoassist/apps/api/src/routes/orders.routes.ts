@@ -104,8 +104,10 @@ router.get('/:id', validate({ params: OrderIdParam }), async (req: Request, res:
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    // Проверяем права доступа
-    if (order.clientId !== Number(userId)) {
+    // Проверяем права доступа - клиент заказа или админ/менеджер может видеть оценку
+    const userRole = (req.user as any)?.role ?? null;
+    const isAdminOrManager = userRole && ['admin', 'manager'].includes(String(userRole));
+    if (order.clientId !== Number(userId) && !isAdminOrManager) {
       return res.status(403).json({ error: 'Access denied' });
     }
 

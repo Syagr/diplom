@@ -25,6 +25,14 @@
     "worker:previews": "ts-node src/workers/previews.worker.ts",
     "docker:build": "docker build -t autoassist-api .",
     "docker:run": "docker run -p 3001:3001 autoassist-api"
+    ,"scripts:seed:audit": "node ./apps/api/scripts/seed-audit.js"
+    ,"scripts:seed:estimate": "node ./apps/api/scripts/seed-estimate.js"
+    ,"seed:demo-orders": "node ./apps/api/scripts/seed-demo-orders.js"
+    ,"audit:dedupe": "node ./apps/api/scripts/dedupe-audit.js"
+    ,"audit:normalize": "node ./apps/api/scripts/normalize-audit.js"
+    ,"fix:demo-data": "node ./apps/api/scripts/fix-demo-data.js"
+    ,"wipe:orders": "node ./apps/api/scripts/wipe-orders-and-actions.js"
+    ,"seed:kyiv": "node ./apps/api/scripts/seed-kyiv-orders.js"
   },
   "keywords": [
     "insurance",

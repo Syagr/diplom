@@ -134,6 +134,15 @@ router.post('/:id/approve', async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    const estimateRecord = await estimateService.getEstimateByOrderId ? await estimateService.getEstimateByOrderId(Number(id)) : null;
+
+    // Authorization: only the order client or admin/manager can approve
+    const userRole = (req.user as any)?.role ?? null;
+    const isAdminOrManager = userRole && ['admin', 'manager'].includes(String(userRole));
+    if (!isAdminOrManager && estimateRecord?.order?.clientId !== Number(userId)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
     const estimate = await estimateService.approveEstimate(parseInt(id), userId);
     
     if (!estimate) {
@@ -156,6 +165,13 @@ router.post('/:id/reject', async (req: Request, res: Response) => {
 
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const estimateRecord = await estimateService.getEstimateByOrderId ? await estimateService.getEstimateByOrderId(Number(id)) : null;
+    const userRole = (req.user as any)?.role ?? null;
+    const isAdminOrManager = userRole && ['admin', 'manager'].includes(String(userRole));
+    if (!isAdminOrManager && estimateRecord?.order?.clientId !== Number(userId)) {
+      return res.status(403).json({ error: 'Access denied' });
     }
 
     const estimate = await estimateService.rejectEstimate(parseInt(id), userId, reason);
