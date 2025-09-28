@@ -26,6 +26,31 @@ export function getUserInfo() {
   try { return { name: localStorage.getItem('aa_user_name') || null, role: localStorage.getItem('aa_user_role') || null } } catch { return { name: null, role: null } }
 }
 
+export function getRole() {
+  try {
+    // Preference: explicit stored role
+    const stored = localStorage.getItem('aa_user_role')
+    if (stored) return stored
+
+    const token = getToken()
+    if (!token) return null
+    const parts = token.split('.')
+    if (parts.length < 2) return null
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+    // common claim locations
+    if (payload?.role) return payload.role
+    if (Array.isArray(payload?.roles) && payload.roles.length) return payload.roles[0]
+    if (typeof payload?.scope === 'string') {
+      if (payload.scope.split(/\s+/).map((s:string)=>s.toLowerCase()).includes('admin')) return 'admin'
+    }
+    // try other common names
+    if (payload?.user_role) return payload.user_role
+    return null
+  } catch {
+    return null
+  }
+}
+
 export function logout() {
   setToken(null)
   saveUserInfo(null, null)
@@ -35,4 +60,4 @@ export function isAuthenticated() {
   return !!getToken()
 }
 
-export default { getToken, setToken, saveUserInfo, getUserInfo, logout, isAuthenticated }
+export default { getToken, setToken, saveUserInfo, getUserInfo, logout, isAuthenticated, getRole }

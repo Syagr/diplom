@@ -41,6 +41,13 @@ function OrderList() {
       setOrders(response.data.orders)
       setError(null)
     } catch (err: any) {
+      // If unauthorized, redirect to login so user can re-authenticate
+      if (err?.response?.status === 401) {
+        setError('Необхідна автентифікація. Будь ласка, увійдіть.')
+        // navigate to login after showing message briefly
+        setTimeout(() => navigate('/login'), 500)
+        return
+      }
       setError(err.response?.data?.error || 'Помилка завантаження заявок')
     } finally {
       setLoading(false)

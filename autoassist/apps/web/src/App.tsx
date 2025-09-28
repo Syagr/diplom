@@ -13,44 +13,7 @@ import axios from 'axios'
 
 // Use Vite proxy by default (empty = same origin -> '/api' proxy)
 
-// DemoRegister and DemoUploader placed above App to avoid HMR/hoisting runtime errors
-function DemoRegister() {
-  const [email, setEmail] = React.useState('test1@example.com')
-  const [password, setPassword] = React.useState('secret123')
-  const [msg, setMsg] = React.useState<string | null>(null)
-  async function onRegister(e: React.FormEvent) {
-    e.preventDefault(); setMsg(null)
-    try {
-      const r = await fetch('/api/auth/register', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      })
-      const text = await r.text()
-      try {
-        const j = JSON.parse(text)
-        if (r.ok) {
-          setMsg('✅ Зарегистрирован')
-        } else {
-          const msgText = j?.error?.message || j?.message || text
-          setMsg('❌ ' + msgText)
-        }
-      } catch (err) {
-        if (r.ok) setMsg('✅ Зарегистрирован')
-        else setMsg('❌ ' + text)
-      }
-    } catch (err:any) { setMsg('❌ ' + (err?.message || String(err))) }
-  }
-  return (
-    <form onSubmit={onRegister} className="space-y-2">
-      <div className="flex gap-2">
-        <input className="border px-2 py-1" value={email} onChange={e=>setEmail(e.target.value)} placeholder="email" />
-        <input className="border px-2 py-1" value={password} onChange={e=>setPassword(e.target.value)} placeholder="password" type="password" />
-        <button className="border px-3 py-1">Register</button>
-      </div>
-      {msg && <div>{msg}</div>}
-    </form>
-  )
-}
+// DemoUploader placed above App to avoid HMR/hoisting runtime errors
 
 function DemoUploader() {
   // Do not offer any demo-login here. UploadAttachment must be used only when
@@ -225,14 +188,12 @@ function App() {
           <Route path="/demo" element={
             <div style={{ maxWidth: 720, margin: '40px auto', display: 'grid', gap: 24 }}>
               <h1>Web3 Демонстрація</h1>
-              <DemoRegister />
               <section>
                 <h2>Web3</h2>
                 <ConnectWallet />
               </section>
               <section>
                 <h2>Завантаження вкладень</h2>
-                {/* For demo we will perform a quick admin login and pass the token to UploadAttachment */}
                 <DemoUploader />
               </section>
             </div>

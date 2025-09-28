@@ -44,11 +44,12 @@ class SocketService {
       (async () => {
         const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '');
 
-        if (!token) {
-          throw new Error('No token provided');
-        }
+          // Require a token for production and development: do not allow unauthenticated dev fallbacks.
+          if (!token) {
+            throw new Error('No token provided');
+          }
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;
+          const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;
 
         // Determine a unique identifier from common JWT claim names.
         // Tokens in this project historically used `sub` for subject or `userId`.
@@ -62,23 +63,23 @@ class SocketService {
           const idNum = Number(possibleId);
           if (!Number.isNaN(idNum)) {
             user = await prisma.user.findUnique({
-              where: { id: idNum },
-              select: { id: true, email: true, role: true, name: true }
-            });
+                where: { id: idNum },
+                select: { id: true, email: true, role: true }
+              });
           }
         }
 
         if (!user && possibleEmail) {
           user = await prisma.user.findUnique({
             where: { email: String(possibleEmail) },
-            select: { id: true, email: true, role: true, name: true }
+            select: { id: true, email: true, role: true }
           });
         }
 
         if (!user && possibleWallet) {
           user = await prisma.user.findUnique({
             where: { walletAddress: String(possibleWallet) },
-            select: { id: true, email: true, role: true, name: true }
+            select: { id: true, email: true, role: true }
           });
         }
 
@@ -89,8 +90,7 @@ class SocketService {
         socket.user = {
           id: user.id,
           email: user.email,
-          role: user.role,
-          name: user.name
+          role: user.role
         };
       })()
         .then(() => next())

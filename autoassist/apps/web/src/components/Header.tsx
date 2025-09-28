@@ -23,9 +23,11 @@ function Header({ isConnected }: HeaderProps) {
   const token = auth.getToken()
   const [pressed, setPressed] = useState<Record<string, boolean>>({})
   const payload = parseJwtPayload(token)
-  const isAdmin = payload?.role === 'admin' || payload?.role === 'ADMIN'
+  const explicitRole = localStorage.getItem('aa_user_role') || null
+  const detectedRole = auth.getRole()
+  const isAdmin = (explicitRole || detectedRole || payload?.role) && String(explicitRole || detectedRole || payload?.role).toLowerCase() === 'admin'
   const userName = (localStorage.getItem('aa_user_name') || payload?.name) ?? null
-  const userRole = (localStorage.getItem('aa_user_role') || payload?.role) ?? null
+  const userRole = explicitRole || detectedRole || payload?.role || null
   return (
     <header className="bg-white shadow-sm border-b">
       <div className="container mx-auto px-4 py-4">

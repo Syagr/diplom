@@ -24,7 +24,9 @@ import paymentsRoutes, { stripeWebhookHandler } from './routes/payments.routes.j
 import towRoutes from './routes/tow.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import walletRoutes from './routes/wallet.routes.js';
+import estimatesRoutes from './routes/estimates.routes.js';
 import { authenticate } from './middleware/auth.middleware.js';
+import adminRoutes from './routes/admin.routes.js';
 import { ZodError } from 'zod';
 import { zodToUa } from './utils/zod-ua.js';
 
@@ -219,6 +221,25 @@ app.use('/api/payments', authenticate, paymentsRoutes);
 app.use('/api/tow', authenticate, towRoutes);
 app.use('/api/notifications', authenticate, notificationsRoutes);
 app.use('/api/wallet', walletRoutes);
+app.use('/api/estimates', authenticate, estimatesRoutes);
+app.use('/api/admin', authenticate, adminRoutes);
+
+// Admin test endpoint to emit a test event to admins (useful in dev)
+app.post('/api/admin/test-event', authenticate, (req, res) => {
+  try {
+    const role = (req.user as any)?.role || null;
+    if (!role || !['admin', 'manager'].includes(String(role).toLowerCase())) {
+      return res.status(403).json({ error: 'FORBIDDEN', message: 'Admin role required' });
+    }
+
+    const payload = req.body && Object.keys(req.body).length ? req.body : { test: true, ts: new Date().toISOString() };
+    socketService.emitToRole('admin', 'order:created', payload);
+    return res.json({ ok: true });
+  } catch (err: any) {
+    logger.error('Failed to emit admin test event', { error: err?.message || String(err) });
+    return res.status(500).json({ error: 'INTERNAL', message: 'Failed to emit event' });
+  }
+});
 
 // WebSocket status endpoint
 app.get('/api/socket/status', (req, res) => {
