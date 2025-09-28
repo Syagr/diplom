@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 
 interface Order {
@@ -10,20 +11,24 @@ interface Order {
   client: {
     name: string
     phone: string
+    email?: string
   }
   vehicle: {
     plate: string
     make?: string
     model?: string
+    year?: number
   }
+  locations?: Array<{ id: number; orderId: number; kind: string; lat?: number; lng?: number; address?: string }>
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+const API_URL = (import.meta as any).env?.VITE_API_URL || '' // use Vite proxy '/api' when empty
 
 function OrderList() {
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     fetchOrders()
@@ -166,9 +171,18 @@ function OrderList() {
                   <p className="text-gray-600">{order.vehicle.plate}</p>
                 </div>
               </div>
-
+              {/* show pickup address if available */}
+              {order.locations && order.locations.length > 0 && (
+                <div className="mt-3 text-sm text-gray-700">
+                  {(() => {
+                    const pickup = order.locations.find((l:any) => l.kind === 'pickup')
+                    if (pickup) return (<div><strong>Місце виклику:</strong> {pickup.address || `${pickup.lat}, ${pickup.lng}`}</div>)
+                    return null
+                  })()}
+                </div>
+              )}
               <div className="mt-4 pt-4 border-t border-gray-200">
-                <button className="text-primary-600 hover:text-primary-700 font-medium">
+                <button onClick={() => navigate(`/orders/${order.id}`)} className="text-primary-600 hover:text-primary-700 font-medium">
                   Переглянути деталі →
                 </button>
               </div>

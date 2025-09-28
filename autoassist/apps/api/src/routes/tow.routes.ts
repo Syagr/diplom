@@ -41,7 +41,8 @@ const TOW_CONFIG = {
  * @access Private
  */
 router.post('/quote', async (req: Request, res: Response) => {
-  const { orderId, pickup, destination, serviceLevel = 'STANDARD' } = req.body;
+  const { orderId: rawOrderId, pickup, destination, serviceLevel = 'STANDARD' } = req.body;
+  const orderId = rawOrderId ? Number(rawOrderId) : undefined;
 
   try {
     if (!orderId && !pickup) {
@@ -58,7 +59,7 @@ router.post('/quote', async (req: Request, res: Response) => {
     // If orderId provided, get order details
     if (orderId) {
       order = await prisma.order.findUnique({
-        where: { id: orderId },
+        where: { id: Number(orderId) },
         include: {
           locations: true,
           vehicle: true
@@ -95,15 +96,19 @@ router.post('/quote', async (req: Request, res: Response) => {
     // Save quote to database if orderId provided
     if (orderId) {
       await prisma.towRequest.upsert({
-        where: { orderId },
+        where: { orderId: Number(orderId) },
         update: {
-          ...quote.data,
-          status: 'QUOTED'
+          distanceKm: quote.data.distanceKm,
+          etaMinutes: quote.data.etaMinutes,
+          price: quote.data.price,
+          status: 'REQUESTED'
         },
         create: {
-          orderId,
-          ...quote.data,
-          status: 'QUOTED'
+          orderId: Number(orderId),
+          distanceKm: quote.data.distanceKm,
+          etaMinutes: quote.data.etaMinutes,
+          price: quote.data.price,
+          status: 'REQUESTED'
         }
       });
     }
@@ -139,7 +144,8 @@ router.post('/quote', async (req: Request, res: Response) => {
  * @access Private
  */
 router.post('/:orderId/assign', async (req: Request, res: Response) => {
-  const { orderId } = req.params;
+  const { orderId: rawOrderId } = req.params;
+  const orderId = Number(rawOrderId);
   const { towTruckId, driverId, serviceLevel = 'STANDARD' } = req.body;
 
   try {
@@ -163,7 +169,7 @@ router.post('/:orderId/assign', async (req: Request, res: Response) => {
       return;
     }
 
-    if (towRequest.status !== 'QUOTED') {
+    if (towRequest.status !== 'REQUESTED') {
       res.status(400).json({
         error: 'INVALID_STATUS',
         message: 'Tow request must be in QUOTED status to assign'
@@ -173,22 +179,19 @@ router.post('/:orderId/assign', async (req: Request, res: Response) => {
 
     // Update tow request with assignment
     const updatedRequest = await prisma.towRequest.update({
-      where: { orderId },
+      where: { orderId: Number(orderId) },
       data: {
         status: 'ASSIGNED',
-        metadata: {
-          ...towRequest.metadata,
-          towTruckId,
-          driverId,
-          assignedAt: new Date(),
-          serviceLevel
-        }
+        partnerId: towTruckId ? Number(towTruckId) : towRequest.partnerId,
+        driverName: driverId ? String(driverId) : towRequest.driverName,
+        driverPhone: towRequest.driverPhone,
+        vehicleInfo: serviceLevel
       }
     });
 
     // Update order status
     await prisma.order.update({
-      where: { id: orderId },
+      where: { id: Number(orderId) },
       data: {
         status: 'SCHEDULED'
       }
@@ -234,7 +237,8 @@ router.post('/:orderId/assign', async (req: Request, res: Response) => {
  * @access Private
  */
 router.get('/:orderId/status', async (req: Request, res: Response) => {
-  const { orderId } = req.params;
+  const { orderId: rawOrderId } = req.params;
+  const orderId = Number(rawOrderId);
 
   try {
     const towRequest = await prisma.towRequest.findUnique({
@@ -264,8 +268,8 @@ router.get('/:orderId/status', async (req: Request, res: Response) => {
       distanceKm: towRequest.distanceKm,
       etaMinutes: towRequest.etaMinutes,
       price: towRequest.price,
-      priceFormatted: formatCurrency(towRequest.price, 'UAH'),
-      metadata: towRequest.metadata,
+      priceFormatted: formatCurrency(Number(towRequest.price), 'UAH'),
+      metadata: null,
       createdAt: towRequest.createdAt,
       updatedAt: towRequest.updatedAt
     };
@@ -293,7 +297,8 @@ router.get('/:orderId/status', async (req: Request, res: Response) => {
  * @access Private
  */
 router.put('/:orderId/status', async (req: Request, res: Response) => {
-  const { orderId } = req.params;
+  const { orderId: rawOrderId } = req.params;
+  const orderId = Number(rawOrderId);
   const { status, location, estimatedArrival } = req.body;
 
   try {
@@ -321,33 +326,28 @@ router.put('/:orderId/status', async (req: Request, res: Response) => {
 
     // Update tow request
     const updatedRequest = await prisma.towRequest.update({
-      where: { orderId },
+      where: { orderId: Number(orderId) },
       data: {
         status,
-        metadata: {
-          ...towRequest.metadata,
-          lastUpdate: new Date(),
-          currentLocation: location,
-          estimatedArrival
-        }
+        trackingUrl: JSON.stringify({ lastUpdate: new Date(), currentLocation: location, estimatedArrival })
       }
     });
 
     // Update order status based on tow status
     const orderStatusMap: Record<string, string> = {
       'EN_ROUTE': 'SCHEDULED',
-      'ARRIVED': 'IN_PROGRESS',
-      'LOADING': 'IN_PROGRESS',
-      'IN_TRANSIT': 'IN_PROGRESS',
+      'ARRIVED': 'INSERVICE',
+      'LOADING': 'INSERVICE',
+      'IN_TRANSIT': 'INSERVICE',
       'DELIVERED': 'READY',
       'COMPLETED': 'READY'
     };
 
     if (orderStatusMap[status]) {
       await prisma.order.update({
-        where: { id: orderId },
+        where: { id: Number(orderId) },
         data: {
-          status: orderStatusMap[status]
+          status: orderStatusMap[status] as any
         }
       });
     }
@@ -366,7 +366,7 @@ router.put('/:orderId/status', async (req: Request, res: Response) => {
       data: {
         id: updatedRequest.id,
         status: updatedRequest.status,
-        metadata: updatedRequest.metadata
+        metadata: null
       },
       message: 'Tow status updated successfully'
     });
@@ -396,7 +396,7 @@ async function calculateTowQuote(pickup: any, destination: any, serviceLevel: st
     destination.longitude
   );
 
-  const serviceLevelConfig = TOW_CONFIG[serviceLevel as keyof typeof TOW_CONFIG] || TOW_CONFIG.STANDARD;
+  const serviceLevelConfig: any = (TOW_CONFIG as any)[serviceLevel] || TOW_CONFIG.STANDARD;
   
   // Base price calculation
   let price = TOW_CONFIG.BASE_RATE + (distance * TOW_CONFIG.PER_KM_RATE);

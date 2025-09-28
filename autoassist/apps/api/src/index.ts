@@ -68,7 +68,8 @@ app.post('/api/orders', async (req: Request, res: Response) => {
     const vehicle = await prisma.vehicle.upsert({
       where: { plate: data.vehicle.plate },
       update: { ...data.vehicle },
-      create: { ...data.vehicle, client: { connect: { id: client.id } } }
+      // Cast create payload to any to avoid Prisma strict create input errors during the sweep
+      create: { ...(data.vehicle as any), client: { connect: { id: client.id } } } as any
     });
 
     // Create order

@@ -23,7 +23,10 @@ import insuranceRoutes from './routes/insurance.routes.js';
 import paymentsRoutes, { stripeWebhookHandler } from './routes/payments.routes.js';
 import towRoutes from './routes/tow.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
+import walletRoutes from './routes/wallet.routes.js';
 import { authenticate } from './middleware/auth.middleware.js';
+import { ZodError } from 'zod';
+import { zodToUa } from './utils/zod-ua.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -81,14 +84,7 @@ app.use('/api/', limiter);
 app.use(helmet());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 1000 }));
 
-// Lightweight healthz endpoint
-app.get('/healthz', (_req, res) => {
-  res.json({
-    ok: true,
-    time: new Date().toISOString(),
-    uptimeSec: Math.round(process.uptime()),
-  });
-});
+// ...existing code...
 
 // Swagger UI (static openapi.json)
 try {
@@ -116,6 +112,24 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
+// API healthz endpoint (registered after CORS so responses will include CORS headers)
+app.get('/api/healthz', async (_req, res) => {
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+    uptimeSec: Math.round(process.uptime()),
+  });
+});
+
+// Also expose /healthz (same payload) and ensure it is registered after CORS so Access-Control-Allow-Origin is present
+app.get('/healthz', async (_req, res) => {
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+    uptimeSec: Math.round(process.uptime()),
+  });
+});
+
 // Body parsing middleware - note: webhook raw route is added before json parser below
 app.use(compression());
 
@@ -132,6 +146,22 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Parse cookies so auth middleware can read access tokens from cookies when present
 app.use(cookieParser());
+
+// --- Diagnostic middleware: log incoming request path and a few headers to help debug proxying issues
+app.use((req, _res, next) => {
+  try {
+    // Log originalUrl (full requested path), url (possibly modified), baseUrl
+    logger.info('INCOMING_REQUEST', {
+      method: req.method,
+      originalUrl: req.originalUrl,
+      url: req.url,
+      baseUrl: (req as any).baseUrl,
+      host: req.headers.host,
+      forwarded: req.headers['x-forwarded-for'] || null
+    });
+  } catch (e) { /* ignore logging error */ }
+  next();
+});
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -188,6 +218,7 @@ app.use('/api/insurance', authenticate, insuranceRoutes);
 app.use('/api/payments', authenticate, paymentsRoutes);
 app.use('/api/tow', authenticate, towRoutes);
 app.use('/api/notifications', authenticate, notificationsRoutes);
+app.use('/api/wallet', walletRoutes);
 
 // WebSocket status endpoint
 app.get('/api/socket/status', (req, res) => {
@@ -206,6 +237,14 @@ app.use('*', (req, res) => {
     message: 'The requested resource was not found',
     path: req.originalUrl
   });
+});
+
+// Global Zod error catcher (translate to UA)
+app.use((err: any, _req: any, res: any, next: any) => {
+  if (err instanceof ZodError) {
+    return res.status(400).json(zodToUa(err));
+  }
+  next(err);
 });
 
 // Global error handler

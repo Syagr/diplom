@@ -4,6 +4,7 @@ import { formatCurrency } from '../../../../packages/shared/dist/utils/helpers.j
 import { logger } from '../libs/logger.js';
 
 const prisma = new PrismaClient();
+const p: any = prisma;
 
 // Insurance business rules and rates
 const INSURANCE_RULES = {
@@ -79,20 +80,9 @@ export class InsuranceService {
         return;
       }
 
-      const order = await prisma.order.findUnique({
-        where: { id: orderId },
-        include: {
-          client: true,
-          vehicle: {
-            include: {
-              insurancePolicies: {
-                where: {
-                  status: 'ACTIVE'
-                }
-              }
-            }
-          }
-        }
+      const order = await p.order.findUnique({
+        where: { id: Number(orderId) },
+        include: { client: true }
       });
 
       if (!order) {
@@ -103,7 +93,14 @@ export class InsuranceService {
         return;
       }
 
-      if (!order.vehicle) {
+      // Fetch vehicle and its active insurance policies separately because the
+      // Prisma schema may not have a direct relation included on order -> vehicle
+      const vehicle = await p.vehicle.findUnique({ where: { id: order.vehicleId } });
+      const activePolicies = vehicle
+        ? await p.insurancePolicy.findMany({ where: { vehicleId: vehicle.id, status: 'ACTIVE' } })
+        : [];
+
+      if (!vehicle) {
         res.status(400).json({
           error: 'NO_VEHICLE',
           message: 'Vehicle information required for insurance offers'
@@ -111,11 +108,14 @@ export class InsuranceService {
         return;
       }
 
-      const offers = await this.calculateInsuranceOffers(order);
+      // attach policies to vehicle for downstream logic
+      (vehicle as any).insurancePolicies = activePolicies;
+
+      const offers = await this.calculateInsuranceOffers({ client: order.client, vehicle, id: order.id });
       
       logger.info('Insurance offers generated', {
         orderId,
-        vehicleId: order.vehicle.id,
+        vehicleId: vehicle.id,
         offerCount: offers.length
       });
 
@@ -144,8 +144,8 @@ export class InsuranceService {
     const { offerId } = req.params;
 
     try {
-      const offer = await prisma.insuranceOffer.findUnique({
-        where: { id: offerId },
+      const offer = await p.insuranceOffer.findUnique({
+        where: { id: Number(offerId) },
         include: {
           order: true,
           client: true,
@@ -181,8 +181,8 @@ export class InsuranceService {
       const policy = await this.createInsurancePolicy(offer);
 
       // Update offer status
-      await prisma.insuranceOffer.update({
-        where: { id: offerId },
+      await p.insuranceOffer.update({
+        where: { id: Number(offerId) },
         data: {
           status: 'ACCEPTED',
           acceptedAt: new Date()
@@ -232,8 +232,8 @@ export class InsuranceService {
     const { clientId } = req.params;
 
     try {
-      const policies = await prisma.insurancePolicy.findMany({
-        where: { clientId },
+      const policies = await p.insurancePolicy.findMany({
+        where: { clientId: Number(clientId) },
         include: {
           vehicle: {
             select: {
@@ -289,8 +289,8 @@ export class InsuranceService {
     const vehicleAge = currentYear - vehicle.year;
     
     // Get existing active policies to avoid duplicates
-    const activePolicies = vehicle.insurancePolicies || [];
-    const activePolicyTypes = new Set(activePolicies.map((p: any) => p.type));
+  const activePolicies = (vehicle as any).insurancePolicies || [];
+  const activePolicyTypes = new Set<string>(activePolicies.map((p: any) => String(p.type)));
 
     const offers = [];
     const baseRates = INSURANCE_RULES.BASE_RATES;
@@ -300,7 +300,7 @@ export class InsuranceService {
     const clientDiscount = this.getClientDiscount(client, vehicle);
 
     // Generate offers for each policy type not currently active
-    for (const [policyType, baseRate] of Object.entries(baseRates)) {
+  for (const [policyType, baseRate] of Object.entries(baseRates) as Array<[string, number]>) {
       if (activePolicyTypes.has(policyType)) {
         continue; // Skip if already has active policy of this type
       }
@@ -310,7 +310,7 @@ export class InsuranceService {
       const coverage = INSURANCE_RULES.COVERAGE_LIMITS[policyType as keyof typeof INSURANCE_RULES.COVERAGE_LIMITS];
 
       // Create offer record
-      const offer = await prisma.insuranceOffer.create({
+      const offer = await p.insuranceOffer.create({
         data: {
           orderId: order.id,
           clientId: client.id,
@@ -358,7 +358,7 @@ export class InsuranceService {
     const startDate = new Date();
     const endDate = new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000); // 1 year
 
-    return await prisma.insurancePolicy.create({
+    return await p.insurancePolicy.create({
       data: {
         clientId: offer.clientId,
         vehicleId: offer.vehicleId,

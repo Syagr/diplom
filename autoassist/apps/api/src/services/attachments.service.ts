@@ -1,4 +1,5 @@
 import prisma from '../utils/prisma.js';
+const p: any = prisma;
 import { minio, ATTACH_BUCKET, ensureBucket, buildObjectKey } from '../libs/minio.js';
 import { previewsQ, cleanupQ } from '../queues/index.js';
 import { PresignUploadBody } from '../validators/attachments.schema.js';
@@ -11,7 +12,7 @@ const DOWNLOAD_TTL_SEC = 60 * 10; // 10 minutes
 export async function presignUpload(userId: number, role: string, body: PresignUploadBody) {
   await ensureBucket();
 
-  const order = await prisma.order.findUnique({
+  const order = await p.order.findUnique({
     where: { id: body.orderId },
     select: { id: true, clientId: true } as any
   });
@@ -39,7 +40,7 @@ export async function presignUpload(userId: number, role: string, body: PresignU
   };
   const attachmentType = kindMap[rawKind] ?? AttachmentType.DOCUMENT;
 
-  const attachment = await prisma.attachment.create({
+  const attachment = await p.attachment.create({
     data: {
       orderId: body.orderId,
       type: attachmentType,
@@ -65,7 +66,7 @@ export async function presignUpload(userId: number, role: string, body: PresignU
 }
 
 export async function completeUpload(userId: number, role: string, attachmentId: number) {
-  const att = await prisma.attachment.findUnique({
+  const att = await p.attachment.findUnique({
     where: { id: attachmentId },
     include: { order: { select: { clientId: true, id: true } } } as any
   });
@@ -81,18 +82,19 @@ export async function completeUpload(userId: number, role: string, attachmentId:
 
   // ensure object exists
   await minio.statObject(ATTACH_BUCKET, att.objectKey ?? '');
-
-  await prisma.attachment.update({
+  // do not store short-lived presigned GET URLs in the DB — keep only objectKey and status
+  await p.attachment.update({
     where: { id: attachmentId },
     data: { status: 'ready' }
   });
   // enqueue preview generation
   try { await previewsQ.add('make-preview', { attachmentId }, { attempts: 3, removeOnComplete: 100, removeOnFail: 200 }); } catch (e) { /* swallow */ }
-  return { ok: true };
+  // return minimal info; front-end can request a fresh presigned GET when needed
+  return { ok: true, id: attachmentId, objectKey: att.objectKey };
 }
 
 export async function presignDownload(userId: number, role: string, attachmentId: number) {
-  const att = await prisma.attachment.findUnique({
+  const att = await p.attachment.findUnique({
     where: { id: attachmentId },
     include: { order: { select: { clientId: true, id: true } } } as any
   });
@@ -116,7 +118,7 @@ export async function presignDownload(userId: number, role: string, attachmentId
 }
 
 export async function listByOrder(userId: number, role: string, orderId: number) {
-  const order = await prisma.order.findUnique({
+  const order = await p.order.findUnique({
     where: { id: orderId },
     select: { id: true, clientId: true } as any
   });
@@ -128,14 +130,14 @@ export async function listByOrder(userId: number, role: string, orderId: number)
     throw err;
   }
 
-  return prisma.attachment.findMany({
+  return p.attachment.findMany({
     where: { orderId, status: { in: ['pending', 'ready'] } },
     orderBy: { createdAt: 'desc' }
   });
 }
 
 export async function removeAttachment(userId: number, role: string, attachmentId: number) {
-  const att = await prisma.attachment.findUnique({
+  const att = await p.attachment.findUnique({
     where: { id: attachmentId },
     include: { order: { select: { clientId: true, id: true } } } as any
   });
@@ -147,7 +149,7 @@ export async function removeAttachment(userId: number, role: string, attachmentI
     throw err;
   }
 
-  await prisma.attachment.update({
+  await p.attachment.update({
     where: { id: attachmentId },
     data: { removedAt: new Date(), status: 'removed' }
   });

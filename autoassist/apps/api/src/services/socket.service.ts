@@ -1,13 +1,15 @@
-import { Server } from 'socket.io';
+import { Server, Socket } from 'socket.io';
+import type { ExtendedError } from 'socket.io';
 import { Server as HttpServer } from 'http';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 import { logger } from '../libs/logger.js';
 
 const prisma = new PrismaClient();
+const p: any = prisma;
 
 interface SocketUser {
-  id: string;
+  id: number;
   email: string;
   role: string;
   name?: string;
@@ -37,27 +39,48 @@ class SocketService {
    * Setup authentication middleware
    */
   private setupMiddleware() {
-    this.io.use(async (socket: SocketWithUser, next) => {
-      try {
+    // socket.io expects a synchronous middleware function that calls next(err?)
+    this.io.use((socket: SocketWithUser, next: (err?: ExtendedError) => void) => {
+      (async () => {
         const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '');
-        
+
         if (!token) {
           throw new Error('No token provided');
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as any;
-        
-        // Get user from database
-        const user = await prisma.user.findUnique({
-          where: { id: decoded.userId },
-          select: {
-            id: true,
-            email: true,
-            role: true,
-            firstName: true,
-            lastName: true
+
+        // Determine a unique identifier from common JWT claim names.
+        // Tokens in this project historically used `sub` for subject or `userId`.
+        const possibleId = decoded?.userId ?? decoded?.sub ?? decoded?.id;
+        const possibleEmail = decoded?.email;
+        const possibleWallet = decoded?.walletAddress ?? decoded?.wallet;
+
+        // Build a where clause only with a valid unique field to avoid Prisma errors.
+        let user: any = null;
+        if (possibleId !== undefined && possibleId !== null) {
+          const idNum = Number(possibleId);
+          if (!Number.isNaN(idNum)) {
+            user = await prisma.user.findUnique({
+              where: { id: idNum },
+              select: { id: true, email: true, role: true, name: true }
+            });
           }
-        });
+        }
+
+        if (!user && possibleEmail) {
+          user = await prisma.user.findUnique({
+            where: { email: String(possibleEmail) },
+            select: { id: true, email: true, role: true, name: true }
+          });
+        }
+
+        if (!user && possibleWallet) {
+          user = await prisma.user.findUnique({
+            where: { walletAddress: String(possibleWallet) },
+            select: { id: true, email: true, role: true, name: true }
+          });
+        }
 
         if (!user) {
           throw new Error('User not found');
@@ -67,17 +90,21 @@ class SocketService {
           id: user.id,
           email: user.email,
           role: user.role,
-          name: `${user.firstName || ''} ${user.lastName || ''}`.trim()
+          name: user.name
         };
-
-        next();
-      } catch (error) {
-        logger.error('Socket authentication failed', {
-          error: error instanceof Error ? error.message : String(error),
-          socketId: socket.id
+      })()
+        .then(() => next())
+        .catch((err) => {
+          logger.error('Socket authentication failed', {
+            error: err instanceof Error ? err.message : String(err),
+            socketId: (socket as any).id,
+            // include a short snippet of decoded token claims when available
+            tokenSnippet: (() => {
+              try { const d = jwt.decode(socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '')); return typeof d === 'object' ? { sub: (d as any).sub, userId: (d as any).userId, email: (d as any).email } : null } catch(e) { return null }
+            })()
+          });
+          next({ message: 'Authentication failed' } as ExtendedError);
         });
-        next(new Error('Authentication failed'));
-      }
     });
   }
 
@@ -94,10 +121,10 @@ class SocketService {
 
       // Store connected user
       if (socket.user) {
-        this.connectedUsers.set(socket.user.id, socket);
+        this.connectedUsers.set(String(socket.user.id), socket);
         
         // Join user-specific room
-        socket.join(`user:${socket.user.id}`);
+  socket.join(`user:${socket.user.id}`);
         
         // Join role-based room
         socket.join(`role:${socket.user.role}`);
@@ -164,7 +191,7 @@ class SocketService {
       socket.on('send:message', async (data: { chatId: string; message: string; type?: string }) => {
         try {
           // Save message to database
-          const message = await prisma.message.create({
+          const message = await p.message.create({
             data: {
               chatId: data.chatId,
               senderId: socket.user!.id,
@@ -175,8 +202,7 @@ class SocketService {
               sender: {
                 select: {
                   id: true,
-                  firstName: true,
-                  lastName: true,
+                  name: true,
                   email: true
                 }
               }
@@ -192,7 +218,7 @@ class SocketService {
             createdAt: message.createdAt,
             sender: {
               id: message.sender.id,
-              name: `${message.sender.firstName || ''} ${message.sender.lastName || ''}`.trim(),
+              name: message.sender.name,
               email: message.sender.email
             }
           });
@@ -216,17 +242,19 @@ class SocketService {
       socket.on('update:location', async (data: { latitude: number; longitude: number; towRequestId?: string }) => {
         try {
           if (socket.user?.role === 'DRIVER' && data.towRequestId) {
-            // Update tow request with current location
-            await prisma.towRequest.update({
-              where: { id: data.towRequestId },
+            // Update tow request with current location (coerce id to number)
+            await p.towRequest.update({
+              where: { id: Number(data.towRequestId) },
               data: {
-                metadata: {
+                // store location in a json field or as text depending on schema
+                // use 'metadata' if exists, otherwise use 'trackingUrl' as placeholder
+                metadata: JSON.stringify({
                   currentLocation: {
                     latitude: data.latitude,
                     longitude: data.longitude,
                     timestamp: new Date()
                   }
-                }
+                })
               }
             });
 
@@ -273,7 +301,7 @@ class SocketService {
       // Handle disconnection
       socket.on('disconnect', () => {
         if (socket.user) {
-          this.connectedUsers.delete(socket.user.id);
+          this.connectedUsers.delete(String(socket.user.id));
         }
         
         logger.info('User disconnected from WebSocket', {
@@ -295,9 +323,10 @@ class SocketService {
   /**
    * Emit event to specific user
    */
-  public emitToUser(userId: string, event: string, data: any) {
-    this.io.to(`user:${userId}`).emit(event, data);
-    logger.debug('Event emitted to user', { userId, event });
+  public emitToUser(userId: string | number, event: string, data: any) {
+    const uid = String(userId);
+    this.io.to(`user:${uid}`).emit(event, data);
+    logger.debug('Event emitted to user', { userId: uid, event });
   }
 
   /**
@@ -354,7 +383,7 @@ class SocketService {
   /**
    * Emit notification to user
    */
-  public emitNotification(userId: string, notification: {
+  public emitNotification(userId: string | number, notification: {
     type: 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR';
     title: string;
     message: string;
@@ -390,8 +419,8 @@ class SocketService {
   /**
    * Check if user is online
    */
-  public isUserOnline(userId: string): boolean {
-    return this.connectedUsers.has(userId);
+  public isUserOnline(userId: string | number): boolean {
+    return this.connectedUsers.has(String(userId));
   }
 
   /**

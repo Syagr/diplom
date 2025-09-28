@@ -3,14 +3,15 @@ import { logger } from '../libs/logger.js';
 import SocketService from './socket.service.js';
 
 const prisma = new PrismaClient();
+const p: any = prisma;
 
 export interface NotificationData {
   type: 'ORDER_CREATED' | 'ORDER_UPDATED' | 'PAYMENT_RECEIVED' | 'TOW_ASSIGNED' | 'INSPECTION_COMPLETED' | 'SYSTEM_ALERT';
   title: string;
   message: string;
   priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  userId: string;
-  orderId?: string;
+  userId: number;
+  orderId?: number;
   metadata?: Record<string, any>;
   channels: NotificationChannel[];
   action?: {
@@ -39,7 +40,7 @@ class NotificationService {
   async sendNotification(data: NotificationData): Promise<void> {
     try {
       // Save notification to database
-      const notification = await prisma.notification.create({
+  const notification = await p.notification.create({
         data: {
           type: data.type,
           title: data.title,
@@ -82,9 +83,9 @@ class NotificationService {
    * Send notification through specific channel
    */
   private async sendThroughChannel(
-    channel: NotificationChannel, 
-    data: NotificationData, 
-    notificationId: string
+    channel: NotificationChannel,
+    data: NotificationData,
+    notificationId: number
   ): Promise<void> {
     try {
       switch (channel) {
@@ -106,9 +107,9 @@ class NotificationService {
       }
 
       // Update delivery status
-      await prisma.notificationDelivery.create({
+  await p.notificationDelivery.create({
         data: {
-          notificationId,
+          notificationId: String(notificationId),
           channel,
           status: 'DELIVERED',
           deliveredAt: new Date()
@@ -117,9 +118,9 @@ class NotificationService {
 
     } catch (error) {
       // Log delivery failure
-      await prisma.notificationDelivery.create({
+  await p.notificationDelivery.create({
         data: {
-          notificationId,
+          notificationId: String(notificationId),
           channel,
           status: 'FAILED',
           error: error instanceof Error ? error.message : String(error)
@@ -155,9 +156,9 @@ class NotificationService {
    */
   private async sendEmailNotification(data: NotificationData): Promise<void> {
     // Get user email
-    const user = await prisma.user.findUnique({
+  const user = await p.user.findUnique({
       where: { id: data.userId },
-      select: { email: true, firstName: true }
+      select: { email: true, name: true }
     });
 
     if (!user?.email) {
@@ -168,7 +169,7 @@ class NotificationService {
     const emailData = {
       to: user.email,
       subject: data.title,
-      html: this.generateEmailTemplate(data, user.firstName),
+  html: this.generateEmailTemplate(data, user.name || user.email),
       metadata: {
         notificationType: data.type,
         userId: data.userId,
@@ -213,7 +214,7 @@ class NotificationService {
    */
   private async sendTelegramNotification(data: NotificationData): Promise<void> {
     // Get user Telegram chat ID
-    const userTelegram = await prisma.userTelegram.findUnique({
+  const userTelegram = await p.userTelegram.findUnique({
       where: { userId: data.userId }
     });
 
@@ -241,8 +242,8 @@ class NotificationService {
    */
   private async sendPushNotification(data: NotificationData): Promise<void> {
     // Get user device tokens
-    const devices = await prisma.userDevice.findMany({
-      where: { 
+  const devices = await p.userDevice.findMany({
+      where: {
         userId: data.userId,
         isActive: true
       }
@@ -271,12 +272,12 @@ class NotificationService {
   /**
    * Get user notification preferences
    */
-  async getUserPreferences(userId: string): Promise<{
+  async getUserPreferences(userId: number): Promise<{
     channels: NotificationChannel[];
     types: string[];
   }> {
-    const preferences = await prisma.notificationPreference.findUnique({
-      where: { userId }
+  const preferences = await p.notificationPreference.findUnique({
+      where: { userId: String(userId) }
     });
 
     return {
@@ -289,20 +290,20 @@ class NotificationService {
    * Update user notification preferences
    */
   async updateUserPreferences(
-    userId: string, 
+    userId: number,
     preferences: {
       channels?: NotificationChannel[];
       types?: string[];
     }
   ): Promise<void> {
-    await prisma.notificationPreference.upsert({
-      where: { userId },
+  await p.notificationPreference.upsert({
+      where: { userId: String(userId) },
       update: {
         enabledChannels: preferences.channels,
         enabledTypes: preferences.types
       },
       create: {
-        userId,
+        userId: String(userId),
         enabledChannels: preferences.channels || ['IN_APP'],
         enabledTypes: preferences.types || []
       }
@@ -317,11 +318,11 @@ class NotificationService {
   /**
    * Mark notification as read
    */
-  async markAsRead(notificationId: string, userId: string): Promise<void> {
-    await prisma.notification.updateMany({
+  async markAsRead(notificationId: number, userId: number): Promise<void> {
+  await p.notification.updateMany({
       where: {
         id: notificationId,
-        userId
+        userId: userId
       },
       data: {
         readAt: new Date()
@@ -333,7 +334,7 @@ class NotificationService {
    * Get user notifications with pagination
    */
   async getUserNotifications(
-    userId: string,
+    userId: number,
     options: {
       page?: number;
       limit?: number;
@@ -352,10 +353,10 @@ class NotificationService {
       userId,
       ...(unreadOnly && { readAt: null }),
       ...(type && { type })
-    };
+    } as any;
 
     const [notifications, total, unreadCount] = await Promise.all([
-      prisma.notification.findMany({
+  p.notification.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         skip,
@@ -364,14 +365,13 @@ class NotificationService {
           order: {
             select: {
               id: true,
-              orderNumber: true,
               status: true
             }
           }
         }
       }),
-      prisma.notification.count({ where }),
-      prisma.notification.count({
+  p.notification.count({ where }),
+  p.notification.count({
         where: { userId, readAt: null }
       })
     ]);
@@ -391,7 +391,7 @@ class NotificationService {
     orderId: string,
     customMessage?: string
   ): Promise<void> {
-    const order = await prisma.order.findUnique({
+  const order = await p.order.findUnique({
       where: { id: orderId },
       include: {
         client: true,
@@ -436,7 +436,7 @@ class NotificationService {
       message,
       priority: type === 'ORDER_CREATED' ? 'HIGH' : 'MEDIUM',
       userId: order.clientId,
-      orderId,
+      orderId: Number(orderId),
       channels: preferences.channels,
       action: {
         label: 'Просмотреть заявление',
@@ -452,7 +452,7 @@ class NotificationService {
         message,
         priority: 'MEDIUM',
         userId: order.assignedToId,
-        orderId,
+        orderId: Number(orderId),
         channels: ['IN_APP'],
         action: {
           label: 'Просмотреть заявление',

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import NotificationService from '@/services/notification.service.js';
 import { logger } from '../libs/logger.js';
+import prisma from '@/utils/prisma.js';
 
 const router = Router();
 const notificationService = new NotificationService();
@@ -9,7 +10,7 @@ const notificationService = new NotificationService();
 // Extend Request interface to include user
 interface AuthenticatedRequest extends Request {
   user?: {
-    id: string;
+    id: number;
     email: string;
     role: string;
   };
@@ -44,7 +45,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       type: type as string
     };
 
-    const result = await notificationService.getUserNotifications(req.user.id, options);
+  const result = await notificationService.getUserNotifications(Number(req.user.id), options);
 
     res.json({
       success: true,
@@ -59,9 +60,8 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
           createdAt: notification.createdAt,
           readAt: notification.readAt,
           action: notification.action,
-          order: notification.order ? {
+            order: notification.order ? {
             id: notification.order.id,
-            orderNumber: notification.order.orderNumber,
             status: notification.order.status
           } : null
         })),
@@ -102,7 +102,7 @@ router.get('/unread-count', async (req: AuthenticatedRequest, res: Response) => 
       return;
     }
 
-    const result = await notificationService.getUserNotifications(req.user.id, {
+    const result = await notificationService.getUserNotifications(Number(req.user.id), {
       limit: 1,
       unreadOnly: true
     });
@@ -143,7 +143,7 @@ router.put('/:id/read', async (req: AuthenticatedRequest, res: Response) => {
 
     const { id } = req.params;
 
-    await notificationService.markAsRead(id, req.user.id);
+  await notificationService.markAsRead(Number(id), Number(req.user.id));
 
     logger.info('Notification marked as read', {
       notificationId: id,
@@ -183,7 +183,7 @@ router.get('/preferences', async (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
-    const preferences = await notificationService.getUserPreferences(req.user.id);
+  const preferences = await notificationService.getUserPreferences(Number(req.user.id));
 
     res.json({
       success: true,
@@ -237,7 +237,7 @@ router.put('/preferences', async (req: AuthenticatedRequest, res: Response) => {
       return;
     }
 
-    await notificationService.updateUserPreferences(req.user.id, {
+    await notificationService.updateUserPreferences(Number(req.user.id), {
       channels,
       types
     });

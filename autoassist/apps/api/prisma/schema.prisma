@@ -38,12 +38,15 @@ model User {
   email         String?   @unique
   phone         String?   @unique
   passwordHash  String
+  name          String?
+  walletAddress String?   @unique
   role          Role      @default(customer)
   clientId      Int?
   client        Client?   @relation(fields: [clientId], references: [id])
   tokenVersion  Int       @default(0)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  auditEvents   AuditEvent[]
 }
 
 model Vehicle {
@@ -327,5 +330,27 @@ model UserAchievement {
 
   @@unique([clientId, achievementId])
   @@map("user_achievements")
+}
+
+// Nonces for wallet signature-based auth
+model WalletNonce {
+  address   String  @id
+  nonce     String
+  createdAt DateTime @default(now())
+
+  @@map("wallet_nonces")
+}
+
+// Central audit/event log for admin history
+model AuditEvent {
+  id        Int      @id @default(autoincrement())
+  type      String
+  payload   Json?
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("audit_events")
 }
 

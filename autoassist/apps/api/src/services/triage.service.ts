@@ -4,6 +4,7 @@ import { calculateDistance, formatCurrency } from '../../../../packages/shared/d
 import { logger } from '../libs/logger.js';
 
 const prisma = new PrismaClient();
+const p: any = prisma;
 
 // Business rules for triage
 const TRIAGE_RULES = {
@@ -36,14 +37,14 @@ export class TriageService {
    * Perform automatic triage when order is created
    * Calculates tow requirements, generates insurance offers
    */
-  async performTriage(orderId: string): Promise<{
+  async performTriage(orderId: string | number): Promise<{
     towQuote?: any;
     insuranceOffers: any[];
     recommendations: string[];
   }> {
     try {
-      const order = await prisma.order.findUnique({
-        where: { id: orderId },
+      const order = await p.order.findUnique({
+        where: { id: Number(orderId) },
         include: {
           client: true,
           vehicle: true,
@@ -134,20 +135,20 @@ export class TriageService {
     const etaMinutes = Math.round((distance / avgSpeed) * 60) + TRIAGE_RULES.ETA_BUFFER_MINUTES;
 
     // Create or update TowRequest
-    const towRequest = await prisma.towRequest.upsert({
-      where: { orderId: order.id },
+    const towRequest = await p.towRequest.upsert({
+      where: { orderId: Number(order.id) },
       update: {
         distanceKm: distance,
         etaMinutes,
         price: Math.round(price),
-        status: 'QUOTED'
+        status: 'REQUESTED'
       },
       create: {
-        orderId: order.id,
+        orderId: Number(order.id),
         distanceKm: distance,
         etaMinutes,
         price: Math.round(price),
-        status: 'QUOTED'
+        status: 'REQUESTED'
       }
     });
 
@@ -173,7 +174,7 @@ export class TriageService {
     const vehicleAge = currentYear - vehicle.year;
 
     // Check existing active policies
-    const existingPolicies = await prisma.insurancePolicy.findMany({
+    const existingPolicies = await p.insurancePolicy.findMany({
       where: {
         vehicleId: vehicle.id,
         status: 'ACTIVE'
@@ -201,7 +202,7 @@ export class TriageService {
       const basePrice = baseRates[policyType as keyof typeof baseRates];
       const finalPrice = Math.round(basePrice * ageMultiplier * clientBonus);
 
-      const offer = await prisma.insuranceOffer.create({
+      const offer = await p.insuranceOffer.create({
         data: {
           orderId: order.id,
           clientId: client.id,

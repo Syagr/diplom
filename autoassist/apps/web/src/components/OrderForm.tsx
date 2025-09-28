@@ -21,7 +21,7 @@ interface FormData {
   pickupAddress: string
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+const API_URL = (import.meta as any).env?.VITE_API_URL || '' // use Vite proxy '/api' when empty
 
 function OrderForm({ isTelegram = false }: OrderFormProps) {
   const [formData, setFormData] = useState<FormData>({
