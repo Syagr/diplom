@@ -146,18 +146,7 @@ export const BLOCKCHAIN_NETWORKS = {
   }
 } as const;
 
-export const TELEGRAM_COMMANDS = {
-  START: 'start',
-  HELP: 'help',
-  NEW_ORDER: 'new_order',
-  MY_ORDERS: 'my_orders',
-  MY_VEHICLES: 'my_vehicles',
-  ADD_VEHICLE: 'add_vehicle',
-  PROFILE: 'profile',
-  ACHIEVEMENTS: 'achievements',
-  SUPPORT: 'support',
-  SETTINGS: 'settings'
-} as const;
+// Telegram commands removed in web/web3-only scope
 
 export const ERROR_CODES = {
   // Authentication

@@ -6,9 +6,8 @@ let _socket: Socket | null = null
 async function backendHealthy(timeout = 1000): Promise<boolean> {
   // Deduplicate concurrent health checks to avoid multiple simultaneous requests
   // Use a short-lived in-flight promise cache
-  type HealthEntry = { p: Promise<boolean>; exp: number }
   const now = Date.now()
-  // @ts-ignore - module-level cache
+  // @ts-expect-error -- module-level cache
   if ((backendHealthy as any)._cache && (backendHealthy as any)._cache.exp > now) {
     return (backendHealthy as any)._cache.p
   }

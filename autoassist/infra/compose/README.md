@@ -10,7 +10,6 @@ This directory contains Docker Compose configuration for local development and t
    ```
 
 2. **Edit environment variables:**
-   - Set your `TELEGRAM_BOT_TOKEN` (required for bot functionality)
    - Adjust passwords and secrets as needed
    - Configure external service URLs if needed
 
@@ -54,9 +53,7 @@ This directory contains Docker Compose configuration for local development and t
   - Hot reload enabled
   - Access: http://localhost:5173
 
-- **Bot** (`bot`): Telegram bot service
-  - Requires `TELEGRAM_BOT_TOKEN` environment variable
-  - Connects to API internally
+<!-- Bot service removed: project scope is web and web3 only -->
 
 - **Nginx** (`nginx`): Reverse proxy (optional)
   - Port: 80
@@ -89,7 +86,6 @@ This directory contains Docker Compose configuration for local development and t
    # Or in each app directory
    cd apps/api && pnpm install
    cd apps/web && pnpm install  
-   cd apps/bot && pnpm install
    ```
 
 2. **Setup database:**
@@ -104,7 +100,7 @@ This directory contains Docker Compose configuration for local development and t
 
 3. **Start development services:**
    ```bash
-   docker-compose up -d api web bot
+   docker-compose up -d api web
    ```
 
 ### Daily Development
@@ -185,10 +181,7 @@ pnpm run db:studio
    sudo chown -R $USER:$USER ./data
    ```
 
-4. **Telegram bot not working:**
-   - Verify `TELEGRAM_BOT_TOKEN` is set in `.env`
-   - Check bot logs: `docker-compose logs bot`
-   - Ensure bot is not running elsewhere
+<!-- Telegram bot troubleshooting removed -->
 
 ### Useful Commands
 

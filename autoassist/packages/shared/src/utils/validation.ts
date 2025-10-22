@@ -58,7 +58,6 @@ export const locationSchema = coordinatesSchema.extend({
 
 // Entity validation schemas
 export const createClientSchema = z.object({
-  telegramId: z.string().optional(),
   phone: phoneSchema,
   firstName: z.string().min(1, 'First name is required').max(50),
   lastName: z.string().min(1, 'Last name is required').max(50),
@@ -150,20 +149,7 @@ export const refreshTokenSchema = z.object({
   refreshToken: z.string().min(1)
 });
 
-// Telegram-specific validation
-export const telegramUserSchema = z.object({
-  id: z.number().int().positive(),
-  is_bot: z.boolean(),
-  first_name: z.string().min(1),
-  last_name: z.string().optional(),
-  username: z.string().optional(),
-  language_code: z.string().length(2).optional()
-});
-
-export const telegramWebAppDataSchema = z.object({
-  data: z.string(),
-  button_text: z.string()
-});
+// Telegram-specific validation removed in web/web3-only scope
 
 // Blockchain validation
 export const ethereumAddressSchema = z.string()

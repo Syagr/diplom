@@ -7,7 +7,12 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": "./dist/index.js",
-    "./*": "./dist/*.js"
+    "./utils/helpers": "./dist/utils/helpers.js",
+    "./utils/validation": "./dist/utils/validation.js",
+    "./utils/constants": "./dist/utils/constants.js",
+    "./types/api": "./dist/types/api.js",
+    "./types/entities": "./dist/types/entities.js",
+    "./types/blockchain": "./dist/types/blockchain.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

@@ -28,7 +28,8 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # If you need custom init SQL, provide ./init.sql
+      # - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test -d autoassist"]
       interval: 10s
@@ -123,5 +124,67 @@ services:
       - "3100:3100"
     volumes:
       - loki_data:/loki
+    networks:
+      - autoassist-network
+
+  api:
+    build:
+      context: ../../
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      # App
+      NODE_ENV: production
+      PORT: 8080
+      JWT_SECRET: change_me_super_secret_key
+      JWT_REFRESH_SECRET: change_me_super_refresh_secret
+      # Database (inside network)
+      DATABASE_URL: postgresql://test:test@db:5432/autoassist?schema=public
+      # Redis
+      REDIS_URL: redis://redis:6379
+      # MinIO
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: attachments
+      # CORS / Public URLs
+      CORS_ORIGIN: http://localhost:5173,http://localhost
+      # Web3 (optional; can be set in .env)
+      WEB3_PROVIDER_URL: ${WEB3_PROVIDER_URL:-}
+      USDC_TOKEN_ADDRESS: ${USDC_TOKEN_ADDRESS:-}
+      PLATFORM_RECEIVE_ADDRESS: ${PLATFORM_RECEIVE_ADDRESS:-}
+      WEB3_ENFORCE_AMOUNT: ${WEB3_ENFORCE_AMOUNT:-false}
+      USDC_DECIMALS: ${USDC_DECIMALS:-6}
+      EXPECTED_SIWE_DOMAIN: ${EXPECTED_SIWE_DOMAIN:-localhost}
+      EXPECTED_SIWE_URI_PREFIX: ${EXPECTED_SIWE_URI_PREFIX:-http://localhost}
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - autoassist-network
+
+  web:
+    build:
+      context: ../../
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5173:80"   # serve SPA on http://localhost:5173
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
       - autoassist-network

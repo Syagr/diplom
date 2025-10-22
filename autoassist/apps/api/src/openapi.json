@@ -1,22 +1,1209 @@
 {
   "openapi": "3.0.3",
-  "info": { "title": "AutoAssist API", "version": "1.0.0" },
+  "info": {
+    "title": "AutoAssist+ API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "http://localhost:8080", "description": "Local (Docker Compose)" },
+    { "url": "http://localhost:3001", "description": "Local (node dev)" }
+  ],
   "components": {
     "securitySchemes": {
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "JWT"
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            },
+            "required": ["code"]
+          }
+        },
+        "required": ["error"]
+      },
+      "TokenPair": {
+        "type": "object",
+        "properties": {
+          "access": { "type": "string", "description": "JWT access token" },
+          "refresh": { "type": "string", "description": "JWT refresh token" }
+        },
+        "required": ["access", "refresh"]
+      },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 6 }
+        },
+        "required": ["email", "password"]
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 6 },
+          "name": { "type": "string" }
+        },
+        "required": ["email", "password"]
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "properties": {
+          "refresh": { "type": "string", "minLength": 10 }
+        },
+        "required": ["refresh"]
+      },
+      "Client": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "phone": { "type": "string" },
+          "email": { "type": "string", "nullable": true }
+        },
+        "required": ["id","name","phone"]
+      },
+      "Vehicle": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "plate": { "type": "string" },
+          "make": { "type": "string", "nullable": true },
+          "model": { "type": "string", "nullable": true },
+          "year": { "type": "integer", "nullable": true },
+          "vin": { "type": "string", "nullable": true }
+        },
+        "required": ["id","plate"]
+      },
+      "OrderLocation": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "kind": { "type": "string", "example": "pickup" },
+          "lat": { "type": "number" },
+          "lng": { "type": "number" },
+          "address": { "type": "string", "nullable": true }
+        }
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "status": { "type": "string", "enum": ["NEW","TRIAGE","QUOTE","APPROVED","SCHEDULED","INSERVICE","READY","DELIVERED","CLOSED","CANCELLED"] },
+          "category": { "type": "string" },
+          "description": { "type": "string", "nullable": true },
+          "priority": { "type": "string", "enum": ["low","normal","high","urgent"] },
+          "client": { "$ref": "#/components/schemas/Client" },
+          "vehicle": { "$ref": "#/components/schemas/Vehicle" },
+          "locations": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/OrderLocation" }
+          }
+        },
+        "required": ["id","status","category","priority","client","vehicle"]
+      },
+      "CreateOrderRequest": {
+        "type": "object",
+        "properties": {
+          "client": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "phone": { "type": "string" },
+              "email": { "type": "string", "format": "email" }
+            },
+            "required": ["name","phone"]
+          },
+          "vehicle": {
+            "type": "object",
+            "properties": {
+              "plate": { "type": "string" },
+              "make": { "type": "string" },
+              "model": { "type": "string" },
+              "year": { "type": "integer" }
+            },
+            "required": ["plate"]
+          },
+          "category": { "type": "string" },
+          "description": { "type": "string" },
+          "priority": { "type": "string", "enum": ["low","normal","high","urgent"] },
+          "pickup": {
+            "type": "object",
+            "properties": {
+              "lat": { "type": "number" },
+              "lng": { "type": "number" },
+              "address": { "type": "string" }
+            }
+          }
+        },
+        "required": ["client","vehicle","category"]
+      },
+      "Pagination": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "total": { "type": "integer" },
+          "pages": { "type": "integer" }
+        }
+      },
+      "Attachment": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "orderId": { "type": "integer" },
+          "type": { "type": "string", "enum": ["DOCUMENT","PHOTO","VIDEO","AUDIO"] },
+          "status": { "type": "string", "enum": ["pending","ready","removed"] },
+          "filename": { "type": "string" },
+          "objectKey": { "type": "string" },
+          "contentType": { "type": "string" },
+          "size": { "type": "integer" }
+        }
+      },
+      "PresignUploadRequest": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "integer" },
+          "fileName": { "type": "string" },
+          "contentType": { "type": "string", "enum": ["image/jpeg","image/png","image/webp","image/heic","video/mp4","application/pdf"] },
+          "size": { "type": "integer", "maximum": 26214400 },
+          "kind": { "type": "string", "enum": ["photo","video","doc"] },
+          "meta": { "type": "object", "additionalProperties": true }
+        },
+        "required": ["orderId","fileName","contentType","size"]
+      },
+      "PresignUploadResponse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "attachmentId": { "type": "integer" },
+          "putUrl": { "type": "string" },
+          "objectKey": { "type": "string" }
+        }
+      },
+      "Estimate": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "orderId": { "type": "integer" },
+          "itemsJson": { "type": "object", "additionalProperties": true },
+          "laborJson": { "type": "object", "additionalProperties": true },
+          "total": { "type": "number" },
+          "currency": { "type": "string", "example": "UAH" },
+          "approved": { "type": "boolean", "nullable": true },
+          "validUntil": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateEstimateRequest": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "integer" },
+          "providerId": { "type": "integer" },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "description": { "type": "string" },
+                "amount": { "type": "number", "minimum": 0 }
+              },
+              "required": ["description","amount"]
+            }
+          },
+          "total": { "type": "number", "minimum": 0 }
+        },
+        "required": ["orderId","providerId","lines","total"]
+      },
+      "UpdateEstimateRequest": {
+        "type": "object",
+        "properties": {
+          "laborCost": { "type": "number" },
+          "partsCost": { "type": "number" },
+          "totalCost": { "type": "number" },
+          "estimatedDays": { "type": "integer", "nullable": true },
+          "description": { "type": "string", "nullable": true },
+          "breakdown": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "InsuranceOffer": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "orderId": { "type": "integer" },
+          "clientId": { "type": "integer" },
+          "vehicleId": { "type": "integer" },
+          "type": { "type": "string", "enum": ["LIABILITY","COMPREHENSIVE","COLLISION","FULL_COVERAGE"] },
+          "provider": { "type": "string" },
+          "premium": { "type": "number" },
+          "deductible": { "type": "number" },
+          "coverage": { "type": "object", "additionalProperties": true },
+          "validUntil": { "type": "string", "format": "date-time" },
+          "status": { "type": "string", "enum": ["OFFERED","ACCEPTED","EXPIRED"] }
+        }
+      },
+      "InsurancePolicy": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "policyNumber": { "type": "string" },
+          "type": { "type": "string" },
+          "provider": { "type": "string" },
+          "premium": { "type": "number" },
+          "deductible": { "type": "number" },
+          "coverage": { "type": "object", "additionalProperties": true },
+          "startDate": { "type": "string", "format": "date-time" },
+          "endDate": { "type": "string", "format": "date-time" },
+          "status": { "type": "string", "enum": ["ACTIVE","CANCELLED","EXPIRED"] },
+          "vehicle": { "$ref": "#/components/schemas/Vehicle" }
+        }
+      },
+      "TowQuoteRequest": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "integer" },
+          "pickup": {
+            "type": "object",
+            "properties": {
+              "latitude": { "type": "number" },
+              "longitude": { "type": "number" },
+              "address": { "type": "string" }
+            }
+          },
+          "destination": {
+            "type": "object",
+            "properties": {
+              "latitude": { "type": "number" },
+              "longitude": { "type": "number" },
+              "address": { "type": "string" }
+            }
+          },
+          "serviceLevel": { "type": "string", "enum": ["STANDARD","EXPRESS","PREMIUM"] }
+        }
+      },
+      "TowQuoteResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "distanceKm": { "type": "number" },
+                  "etaMinutes": { "type": "integer" },
+                  "price": { "type": "number" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "TowAssignRequest": {
+        "type": "object",
+        "properties": {
+          "towTruckId": { "type": "integer" },
+          "driverId": { "type": "integer" },
+          "serviceLevel": { "type": "string", "enum": ["STANDARD","EXPRESS","PREMIUM"] }
+        }
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "message": { "type": "string" },
+          "priority": { "type": "string", "enum": ["LOW","MEDIUM","HIGH","URGENT"] },
+          "isRead": { "type": "boolean" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "readAt": { "type": "string", "format": "date-time", "nullable": true },
+          "action": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          },
+          "order": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": { "type": "integer" },
+              "status": { "type": "string" }
+            }
+          }
+        }
+      },
+      "NotificationPreferences": {
+        "type": "object",
+        "properties": {
+          "channels": { "type": "array", "items": { "type": "string", "enum": ["IN_APP","EMAIL"] } },
+          "types": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "PaymentInvoiceRequest": {
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "integer" },
+          "amount": { "type": "number" },
+          "purpose": { "type": "string", "enum": ["ADVANCE","REPAIR","INSURANCE"] },
+          "provider": { "type": "string", "enum": ["STRIPE","LIQPAY"], "default": "STRIPE" },
+          "currency": { "type": "string", "example": "usd" }
+        },
+        "required": ["orderId","amount","purpose"]
+      },
+      "PaymentInvoiceResponse": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "invoiceUrl": { "type": "string" },
+          "provider": { "type": "string" }
+        }
+      },
+      "WalletNonceResponse": {
+        "type": "object",
+        "properties": { "nonce": { "type": "string" } },
+        "required": ["nonce"]
+      },
+      "WalletVerifyRequest": {
+        "type": "object",
+        "properties": {
+          "address": { "type": "string" },
+          "signature": { "type": "string" },
+          "name": { "type": "string" }
+        },
+        "required": ["address","signature"]
+      },
+      "WalletVerifyResponse": {
+        "type": "object",
+        "properties": { "token": { "type": "string" } },
+        "required": ["token"]
+      },
+      "WalletLinkRequest": {
+        "type": "object",
+        "properties": {
+          "address": { "type": "string" },
+          "signature": { "type": "string" }
+        },
+        "required": ["address","signature"]
       }
     }
   },
   "security": [{ "bearerAuth": [] }],
   "paths": {
-    "/api/auth/login": { "post": { "summary": "Login", "requestBody": { "required": true }, "responses": { "200": { "description": "OK" }}} },
-    "/api/auth/refresh": { "post": { "responses": { "200": { "description": "OK" }}} },
-    "/api/payments/invoice": { "post": { "responses": { "201": { "description": "Created" }}} },
-  "/api/payments/webhook": { "post": { "security": [], "responses": { "200": { "description": "OK" }}} },
-    "/api/attachments/presign-upload": { "post": { "responses": { "200": { "description": "OK" }}} },
-    "/api/attachments/{id}/presign": { "get": { "parameters": [{ "in": "path", "name": "id", "required": true }], "responses": { "200": { "description": "OK" }}} }
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "security": [],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "DB Health",
+        "security": [],
+        "responses": { "200": { "description": "OK" }, "503": { "description": "Unhealthy" } }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics",
+        "description": "Prometheus-formatted metrics exposed by the API",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metrics payload",
+            "content": {
+              "text/plain": {
+                "schema": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/auth/login": {
+      "post": {
+        "summary": "Login",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenPair" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "summary": "Register",
+        "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegisterRequest" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenPair" } } } },
+          "409": { "description": "Email taken", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "summary": "Refresh tokens",
+        "security": [],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RefreshRequest" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenPair" } } } },
+          "401": { "description": "Invalid refresh token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "summary": "Logout (invalidate all tokens)",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+
+    "/api/orders": {
+      "get": {
+        "summary": "List orders (with pagination & filters)",
+        "parameters": [
+          { "in": "query", "name": "status", "schema": { "type": "string" } },
+          { "in": "query", "name": "page", "schema": { "type": "integer", "default": 1 } },
+          { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 10 } },
+          { "in": "query", "name": "category", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "orders": { "type": "array", "items": { "$ref": "#/components/schemas/Order" } },
+                    "pagination": { "$ref": "#/components/schemas/Pagination" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create order (minimal)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateOrderRequest" },
+              "examples": {
+                "basic": {
+                  "summary": "Tow request with pickup",
+                  "value": {
+                    "client": { "name": "Ivan Petrenko", "phone": "+380501112233", "email": "ivan@example.com" },
+                    "vehicle": { "plate": "AA1234BB", "make": "Toyota", "model": "Corolla", "year": 2018 },
+                    "category": "tow",
+                    "description": "Engine stalled on highway",
+                    "priority": "urgent",
+                    "pickup": { "lat": 50.4501, "lng": 30.5234, "address": "Kyiv, Peremohy Ave 10" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "id": { "type": "integer" } }, "required": ["id"] },
+                "examples": { "created": { "value": { "id": 142 } } }
+              }
+            }
+          },
+          "400": { "description": "Validation error" }
+        }
+      }
+    },
+    "/api/orders/{id}": {
+      "get": {
+        "summary": "Get order by id",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } } },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/api/orders/{id}/status": {
+      "put": {
+        "summary": "Update order status (client-owned)",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" } }, "required": ["status"] } } }
+        },
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/api/orders/provider/list": {
+      "get": {
+        "summary": "Provider orders list",
+        "parameters": [
+          { "in": "query", "name": "status", "schema": { "type": "string" } },
+          { "in": "query", "name": "page", "schema": { "type": "integer", "default": 1 } },
+          { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 10 } },
+          { "in": "query", "name": "category", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+
+    "/api/estimates/{orderId}": {
+      "get": {
+        "summary": "Get estimate by orderId",
+        "parameters": [{ "in": "path", "name": "orderId", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Estimate" } } } },
+          "404": { "description": "Estimate not found" }
+        }
+      }
+    },
+    "/api/estimates": {
+      "post": {
+        "summary": "Create estimate",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateEstimateRequest" } } } },
+        "responses": { "201": { "description": "Created" }, "409": { "description": "Already exists" } }
+      }
+    },
+    "/api/estimates/{id}": {
+      "put": {
+        "summary": "Update estimate",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateEstimateRequest" } } } },
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      },
+      "delete": {
+        "summary": "Delete estimate",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "204": { "description": "No Content" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/api/estimates/{id}/approve": {
+      "post": {
+        "summary": "Approve estimate",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+    "/api/estimates/{id}/reject": {
+      "post": {
+        "summary": "Reject estimate",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "reason": { "type": "string" } } } } } },
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    },
+
+    "/api/attachments/presign-upload": {
+      "post": {
+        "summary": "Presign S3/MinIO upload and create attachment",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PresignUploadRequest" },
+              "examples": {
+                "image": {
+                  "summary": "JPEG photo upload",
+                  "value": {
+                    "orderId": 142,
+                    "fileName": "damage-front.jpg",
+                    "contentType": "image/jpeg",
+                    "size": 3482304,
+                    "kind": "photo",
+                    "meta": { "angle": "front-left" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PresignUploadResponse" },
+                "examples": {
+                  "ok": {
+                    "value": {
+                      "id": 987,
+                      "attachmentId": 654,
+                      "putUrl": "http://localhost:9000/autoassist/uploads/damage-front.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256...",
+                      "objectKey": "uploads/2025/10/22/142/damage-front.jpg"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attachments/{id}/complete": {
+      "post": {
+        "summary": "Mark upload complete (generate preview async)",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK" }, "409": { "description": "Not ready/invalid" } }
+      }
+    },
+    "/api/attachments/{id}/presign": {
+      "get": {
+        "summary": "Presign download URL",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "url": { "type": "string" } }, "required": ["url"] },
+                "examples": { "ok": { "value": { "url": "http://localhost:9000/autoassist/uploads/2025/10/22/142/damage-front.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256..." } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attachments/order/{orderId}": {
+      "get": {
+        "summary": "List attachments by order",
+        "parameters": [{ "in": "path", "name": "orderId", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Attachment" } } } } } }
+      }
+    },
+    "/api/attachments/{id}": {
+      "delete": {
+        "summary": "Soft-delete attachment and enqueue cleanup",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+
+    "/api/insurance/offers": {
+      "post": {
+        "summary": "Generate insurance offers for order",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "orderId": { "type": "integer" } }, "required": ["orderId"] } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/InsuranceOffer" } } } } } } }
+        }
+      }
+    },
+    "/api/insurance/offers/{offerId}/accept": {
+      "post": {
+        "summary": "Accept insurance offer",
+        "parameters": [{ "in": "path", "name": "offerId", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Offer not found" } }
+      }
+    },
+    "/api/insurance/clients/{clientId}/policies": {
+      "get": {
+        "summary": "Get client insurance policies",
+        "parameters": [{ "in": "path", "name": "clientId", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/InsurancePolicy" } } } } } } }
+        }
+      }
+    },
+
+    
+    "/api/payments/webhook": {
+      "post": {
+        "summary": "Stripe webhook (raw, unsigned here)",
+        "security": [],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+
+    "/api/tow/quote": {
+      "post": {
+        "summary": "Create/Get tow quote",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TowQuoteRequest" } } } },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/tow/{orderId}/assign": {
+      "post": {
+        "summary": "Assign tow truck to order",
+        "parameters": [{ "in": "path", "name": "orderId", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TowAssignRequest" } } } },
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Tow request not found" } }
+      }
+    },
+    "/api/tow/{orderId}/status": {
+      "get": {
+        "summary": "Get tow status",
+        "parameters": [{ "in": "path", "name": "orderId", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      },
+      "put": {
+        "summary": "Update tow status (driver/dispatcher)",
+        "parameters": [{ "in": "path", "name": "orderId", "required": true, "schema": { "type": "integer" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string" }, "location": { "type": "object", "additionalProperties": true }, "estimatedArrival": { "type": "string" } }, "required": ["status"] } } }
+        },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+
+    "/api/notifications": {
+      "get": {
+        "summary": "List user notifications",
+        "parameters": [
+          { "in": "query", "name": "page", "schema": { "type": "integer", "default": 1 } },
+          { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 20 } },
+          { "in": "query", "name": "unreadOnly", "schema": { "type": "boolean", "default": false } },
+          { "in": "query", "name": "type", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "notifications": { "type": "array", "items": { "$ref": "#/components/schemas/Notification" } }, "pagination": { "$ref": "#/components/schemas/Pagination" }, "unreadCount": { "type": "integer" } } } } } } }
+          }
+        }
+      }
+    },
+    "/api/notifications/unread-count": {
+      "get": {
+        "summary": "Unread notifications count",
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "unreadCount": { "type": "integer" } }, "required": ["unreadCount"] } } } } } } }
+      }
+    },
+    "/api/notifications/{id}/read": {
+      "put": {
+        "summary": "Mark notification as read",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/notifications/preferences": {
+      "get": {
+        "summary": "Get user notification preferences",
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/NotificationPreferences" } } } } } } }
+      },
+      "put": {
+        "summary": "Update user notification preferences",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NotificationPreferences" } } } },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/notifications/test": {
+      "post": {
+        "summary": "Send test notification (admin only)",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "properties": { "userId": { "type": "integer" }, "type": { "type": "string" }, "title": { "type": "string" }, "message": { "type": "string" }, "priority": { "type": "string" }, "channels": { "type": "array", "items": { "type": "string" } } } }
+            }
+          }
+        },
+        "responses": { "200": { "description": "OK" }, "403": { "description": "Forbidden" } }
+      }
+    },
+    "/api/notifications/broadcast": {
+      "post": {
+        "summary": "Broadcast notification to all/role (admin only)",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "title": { "type": "string" }, "message": { "type": "string" }, "priority": { "type": "string" }, "targetRole": { "type": "string" }, "channels": { "type": "array", "items": { "type": "string" } } }, "required": ["title","message"] } } }
+        },
+        "responses": { "200": { "description": "OK" }, "403": { "description": "Forbidden" } }
+      }
+    },
+
+
+    "/api/admin/test-event": {
+      "post": {
+        "summary": "Emit test admin event (admin/manager)",
+        "responses": { "200": { "description": "OK" }, "403": { "description": "Forbidden" } }
+      }
+    },
+    "/api/socket/status": {
+      "get": {
+        "summary": "Socket.IO status",
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    
+
+    "/api/estimates/auto": {
+      "post": {
+        "summary": "Auto-calculate and upsert estimate",
+        "responses": { "200": { "description": "Estimate created/updated" } }
+      }
+    },
+    
+    "/api/estimates/{orderId}/lock": {
+      "post": {
+        "summary": "Lock estimate for order",
+        "parameters": [ { "in": "path", "name": "orderId", "required": true, "schema": { "type": "integer" } } ],
+        "responses": { "200": { "description": "Locked" }, "403": { "description": "Forbidden" } }
+      }
+    },
+    
+    "/api/auth/wallet/nonce": {
+      "post": {
+        "summary": "Issue a login nonce for wallet signature",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "address": { "type": "string" } },
+                "required": ["address"]
+              },
+              "examples": {
+                "request": { "value": { "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Nonce issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "address": { "type": "string" },
+                    "nonce": { "type": "string" }
+                  },
+                  "required": ["address", "nonce"]
+                },
+                "examples": {
+                  "response": { "value": { "address": "0xA0b8...6eB48", "nonce": "0x53c1f2d7a1..." } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    
+    "/api/auth/wallet/verify": {
+      "post": {
+        "summary": "Verify wallet signature and issue JWT (simple or SIWE)",
+        "description": "If `siweMessage` is present, EIP-4361 verification is used with environment expectations (domain/URI/chainId). Otherwise a simple nonce signature is verified.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "address": { "type": "string" },
+                      "signature": { "type": "string" },
+                      "chainId": { "type": "integer" }
+                    },
+                    "required": ["address", "signature"]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "siweMessage": { "type": "string" },
+                      "signature": { "type": "string" }
+                    },
+                    "required": ["siweMessage", "signature"]
+                  }
+                ]
+              },
+              "examples": {
+                "simple": {
+                  "summary": "Simple nonce signature",
+                  "value": {
+                    "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    "signature": "0xabcdef...",
+                    "chainId": 80002
+                  }
+                },
+                "siwe": {
+                  "summary": "SIWE EIP-4361",
+                  "value": {
+                    "siweMessage": "localhost wants you to sign in with your Ethereum account:\n0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48\n\nURI: http://localhost/login\nVersion: 1\nChain ID: 80002\nNonce: 0x53c1f2d7a1\nIssued At: 2025-10-22T10:00:00Z",
+                    "signature": "0xdeadbeef..."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Logged in",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TokenPair" } } }
+          },
+          "401": { "description": "Unauthorized" },
+          "400": { "description": "Validation error" }
+        }
+      }
+    },
+
+    "/api/payments/web3/verify": {
+      "post": {
+        "summary": "Verify on-chain tx, mark payment completed, generate receipt",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "orderId": { "type": "integer" },
+                  "paymentId": { "type": "integer" },
+                  "txHash": { "type": "string", "pattern": "^0x([A-Fa-f0-9]{64})$" }
+                },
+                "required": ["orderId","paymentId","txHash"]
+              },
+              "examples": {
+                "polygonAmoy": {
+                  "summary": "Polygon Amoy hash",
+                  "value": { "orderId": 142, "paymentId": 501, "txHash": "0x1ad2c0f7c5b0e9e8a4b7a838c7d5c9e0b1234567890abcdef1234567890abcd" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Verified" },
+          "400": { "description": "Invalid" }
+        }
+      }
+    },
+
+    "/api/payments/invoice": {
+      "post": {
+        "summary": "Create payment invoice (Stripe)",
+        "parameters": [
+          { "in": "header", "name": "Idempotency-Key", "schema": { "type": "string" }, "required": false, "description": "Idempotency key to avoid duplicate invoices" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "orderId": { "type": "integer" },
+                  "amount": { "type": "number" },
+                  "purpose": { "type": "string", "enum": ["ADVANCE","REPAIR","INSURANCE"] },
+                  "provider": { "type": "string", "enum": ["LIQPAY","STRIPE"], "default": "STRIPE" },
+                  "currency": { "type": "string", "enum": ["UAH","USD","EUR"], "default": "UAH" },
+                  "description": { "type": "string" }
+                },
+                "required": ["orderId","amount","purpose"]
+              },
+              "examples": {
+                "advance": {
+                  "summary": "Advance payment for order",
+                  "value": { "orderId": 142, "amount": 2500, "purpose": "ADVANCE", "currency": "UAH", "provider": "STRIPE", "description": "Advance for diagnostics" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Invoice created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentInvoiceResponse" },
+                "examples": { "ok": { "value": { "id": 501, "invoiceUrl": "https://checkout.stripe.com/c/pay/cs_test_123", "provider": "STRIPE" } } }
+              }
+            }
+          },
+          "403": { "description": "Forbidden" },
+          "404": { "description": "Order not found" },
+          "409": { "description": "Invalid order state" }
+        }
+      }
+    },
+
+    "/api/service-centers/nearby": {
+      "get": {
+        "summary": "Find nearby service centers by coordinates",
+        "parameters": [
+          { "in": "query", "name": "lat", "required": true, "schema": { "type": "number", "minimum": -90, "maximum": 90 } },
+          { "in": "query", "name": "lng", "required": true, "schema": { "type": "number", "minimum": -180, "maximum": 180 } },
+          { "in": "query", "name": "limit", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 50 } },
+          { "in": "query", "name": "maxKm", "required": false, "schema": { "type": "number", "minimum": 1, "maximum": 1000 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of nearby centers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "integer" },
+                          "name": { "type": "string" },
+                          "lat": { "type": "number" },
+                          "lng": { "type": "number" },
+                          "address": { "type": "string", "nullable": true },
+                          "city": { "type": "string", "nullable": true },
+                          "rating": { "type": "number", "nullable": true },
+                          "distanceKm": { "type": "number" },
+                          "partnerDiscountPct": { "type": "number" },
+                          "platformFeePct": { "type": "number" }
+                        },
+                        "required": ["id","name","lat","lng","distanceKm"]
+                      }
+                    },
+                    "count": { "type": "integer" }
+                  },
+                  "required": ["items","count"]
+                },
+                "examples": {
+                  "ok": {
+                    "value": {
+                      "items": [
+                        { "id": 11, "name": "Kyiv AutoFix", "lat": 50.45, "lng": 30.52, "address": "Peremohy Ave 10", "city": "Kyiv", "rating": 4.8, "distanceKm": 1.2, "partnerDiscountPct": 5, "platformFeePct": 2 },
+                        { "id": 12, "name": "Green Service Center", "lat": 50.44, "lng": 30.51, "address": "Khreshchatyk 22", "city": "Kyiv", "rating": 4.6, "distanceKm": 2.9, "partnerDiscountPct": 7, "platformFeePct": 2 }
+                      ],
+                      "count": 2
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/orders/{id}/complete": {
+      "post": {
+        "summary": "Complete order and record proof-hash",
+        "parameters": [ { "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "photos": { "type": "array", "items": { "type": "integer" } },
+                  "coords": { "type": "object", "properties": { "lat": { "type": "number" }, "lng": { "type": "number" } } },
+                  "completedAt": { "type": "string", "format": "date-time" },
+                  "notes": { "type": "string" }
+                },
+                "required": ["photos"]
+              }
+              ,
+              "examples": {
+                "done": {
+                  "summary": "Completion with geo and photos",
+                  "value": {
+                    "photos": [654, 655],
+                    "coords": { "lat": 50.4501, "lng": 30.5234 },
+                    "completedAt": "2025-10-22T12:30:00Z",
+                    "notes": "Client confirmed pick-up"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Order completed",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "order": { "type": "object", "properties": { "id": { "type": "integer" }, "status": { "type": "string" } } }, "proofHash": { "type": "string" } }, "required": ["order","proofHash"] },
+                "examples": { "ok": { "value": { "order": { "id": 142, "status": "CLOSED" }, "proofHash": "sha256:ef2a7f0a9d4a..." } } }
+              }
+            }
+          },
+          "400": { "description": "Invalid id" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Order not found" }
+        }
+      }
+    },
+
+    "/api/orders/{id}/proof": {
+      "get": {
+        "summary": "Get completion proof for order",
+        "parameters": [ { "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } } ],
+        "responses": {
+          "200": {
+            "description": "Proof details",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "orderId": { "type": "integer" }, "proofHash": { "type": "string" }, "evidence": { "type": "object" }, "createdAt": { "type": "string", "format": "date-time" } }, "required": ["orderId","proofHash","createdAt"] } } }
+          },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Forbidden" },
+          "404": { "description": "Not found" }
+        }
+      }
+  },
+
+  "/api/calc-profiles": {
+      "get": {
+        "summary": "List calculation profiles (staff)",
+        "responses": { "200": { "description": "OK" }, "403": { "description": "Forbidden" } }
+      },
+      "post": {
+        "summary": "Create calculation profile (admin/manager)",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": {
+            "code": { "type": "string" },
+            "name": { "type": "string" },
+            "partsCoeff": { "type": "number" },
+            "laborCoeff": { "type": "number" },
+            "nightCoeff": { "type": "number" },
+            "urgentCoeff": { "type": "number" },
+            "suvCoeff": { "type": "number" },
+            "laborRate": { "type": "number" },
+            "active": { "type": "boolean" }
+          }, "required": ["code","name"] } } }
+        },
+        "responses": { "201": { "description": "Created" }, "409": { "description": "Conflict" } }
+      }
+    },
+    
+    "/api/calc-profiles/{id}": {
+      "put": {
+        "summary": "Update calculation profile (admin/manager)",
+        "parameters": [ { "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } } ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      },
+      "delete": {
+        "summary": "Delete calculation profile (admin)",
+        "parameters": [ { "in": "path", "name": "id", "required": true, "schema": { "type": "integer" } } ],
+        "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } }
+      }
+    }
   }
 }

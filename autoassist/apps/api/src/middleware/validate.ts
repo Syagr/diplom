@@ -3,13 +3,17 @@ import { ZodError } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
 import { zodToUa } from '../utils/zod-ua.js';
 
-export function validate(
-  schema: { body?: AnyZodObject; query?: AnyZodObject; params?: AnyZodObject }
-) {
+type SchemaBag = {
+  body?: AnyZodObject;
+  query?: AnyZodObject;
+  params?: AnyZodObject;
+};
+
+export function validate(schema: SchemaBag) {
   return (req: Request, res: Response, next: NextFunction) => {
     try {
-      if (schema.body)  req.body  = schema.body.parse(req.body);
-      if (schema.query) req.query = schema.query.parse(req.query);
+      if (schema.body)  req.body   = schema.body.parse(req.body);
+      if (schema.query) req.query  = schema.query.parse(req.query);
       if (schema.params) req.params = schema.params.parse(req.params);
       next();
     } catch (err) {

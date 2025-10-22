@@ -1,35 +1,27 @@
 #!/usr/bin/env node
-// Simple seed script to insert demo AuditEvent rows for local development.
-// Run with: node ./apps/api/scripts/seed-audit.js
-
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
-
 const prisma = new PrismaClient();
 
-console.log('Seeding demo audit events...');
+async function main() {
+  console.log('🌱 seed-audit…');
 
-const now = new Date();
-const demo = [
-  { type: 'estimate:created', payload: { estimateId: 1, orderId: 101, total: 1234.5 }, userId: 1, createdAt: new Date(now.getTime() - 1000 * 60 * 60) },
-  { type: 'order:created', payload: { orderId: 101, clientId: 10 }, userId: 1, createdAt: new Date(now.getTime() - 1000 * 60 * 50) },
-  { type: 'attachment:uploaded', payload: { attachmentId: 5, orderId: 101 }, userId: 1, createdAt: new Date(now.getTime() - 1000 * 60 * 40) },
-  { type: 'estimate:approved', payload: { estimateId: 1, approvedBy: 1 }, userId: 1, createdAt: new Date(now.getTime() - 1000 * 60 * 10) },
-  { type: 'wallet:link', payload: { address: '0xDEADBEEF' }, userId: 1, createdAt: now }
-];
+  const now = new Date();
+  const base = [
+    { type: 'estimate:created', payload: { orderId: 1, estimateId: 1001, total: 12345 } },
+    { type: 'estimate:approved', payload: { orderId: 1, estimateId: 1001, approvedBy: 1 } },
+    { type: 'order:status', payload: { orderId: 1, from: 'QUOTE', to: 'APPROVED' } }
+  ];
 
-try {
-  for (const e of demo) {
-    try {
-      await prisma.auditEvent.create({ data: e });
-      console.log('Inserted', e.type);
-    } catch (err) {
-      console.error('Failed to insert', e.type, err?.message || err);
-    }
+  for (const e of base) {
+    await prisma.auditEvent.create({
+      data: { type: e.type, payload: e.payload, createdAt: now }
+    });
   }
-} catch (err) {
-  console.error('Seeding failed:', err?.message || err);
-  process.exitCode = 1;
-} finally {
-  await prisma.$disconnect();
-  console.log('Seeding complete.');
+
+  console.log('✅ audit events inserted:', base.length);
 }
+
+main()
+  .catch((e) => { console.error('❌ seed-audit failed:', e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

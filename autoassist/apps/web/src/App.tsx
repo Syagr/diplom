@@ -8,6 +8,7 @@ import Header from './components/Header'
 import UploadAttachment from './components/UploadAttachment'
 import ConnectWallet from './components/ConnectWallet'
 import AdminPage from './pages/Admin'
+import MapPage from './pages/Map'
 import auth from './utils/auth'
 import axios from 'axios'
 
@@ -198,25 +199,15 @@ function App() {
               </section>
             </div>
           } />
-          <Route path="/tg" element={<TelegramWebApp />} />
 
           {/* Protected application routes */}
           <Route path="/" element={<ProtectedRoute><OrderForm /></ProtectedRoute>} />
           <Route path="/orders" element={<ProtectedRoute><OrderList /></ProtectedRoute>} />
           <Route path="/orders/:id" element={<ProtectedRoute><OrderDetails /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="/map" element={<ProtectedRoute><MapPage /></ProtectedRoute>} />
         </Routes>
       </main>
-    </div>
-  )
-}
-
-// Telegram WebApp component
-function TelegramWebApp() {
-  return (
-    <div className="max-w-md mx-auto">
-      <h1 className="text-2xl font-bold mb-6">AutoAssist+ WebApp</h1>
-      <OrderForm isTelegram={true} />
     </div>
   )
 }

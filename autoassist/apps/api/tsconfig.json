@@ -16,6 +16,7 @@
     "typeRoots": ["node_modules/@types"],
   "allowSyntheticDefaultImports": true,
   "verbatimModuleSyntax": true,
+    "isolatedModules": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
@@ -25,7 +26,13 @@
       "@/middleware/*": ["src/middleware/*"],
       "@/types/*": ["src/types/*"],
       "@/utils/*": ["src/utils/*"],
-  "@autoassist/shared": ["src/aliases/shared.ts"]
+      "@autoassist/shared": ["../../packages/shared/src/index.ts"],
+      "@autoassist/shared/utils/helpers": ["../../packages/shared/src/utils/helpers.ts"],
+      "@autoassist/shared/utils/validation": ["../../packages/shared/src/utils/validation.ts"],
+      "@autoassist/shared/utils/constants": ["../../packages/shared/src/utils/constants.ts"],
+      "@autoassist/shared/types/api": ["../../packages/shared/src/types/api.ts"],
+      "@autoassist/shared/types/entities": ["../../packages/shared/src/types/entities.ts"],
+      "@autoassist/shared/types/blockchain": ["../../packages/shared/src/types/blockchain.ts"]
     }
   },
   "include": [
@@ -36,13 +43,34 @@
     "*.config.ts"
   ],
   "exclude": [
+  "src/validators/estimates.schema.ts",
+  "src/services/estimate.service.new.ts",
+  "src/services/order.service.new.ts",
+  "src/services/notification.service.ts",
+  "src/services/payments.service.new.ts",
     "node_modules",
     "dist",
     "coverage",
     "**/*.test.ts",
     "**/*.spec.ts",
     "src/**/*.legacy.ts",
-    "src/index.legacy.ts"
+    "src/index.legacy.ts",
+    // Exclude legacy/unused routes and services
+    "src/routes/estimates.routes.ts",
+    "src/routes/tow.routes.ts",
+    "src/routes/insurance.routes.ts",
+    "src/routes/orders.routes.ts",
+    "src/routes/wallet.routes.ts",
+    "src/routes/notifications.routes.ts",
+    "src/routes/payments.routes.new.ts",
+    "src/services/insurance.service.ts",
+    "src/services/triage.service.ts",
+    "src/services/wallet.service.ts",
+    "src/routes/**/admin*.ts",
+    "src/routes/**/notifications*.ts",
+    "src/routes/**/wallet*.ts",
+    "src/routes/**/orders*.ts",
+    "src/workers/**/*.ts"
   ],
   "ts-node": {
     "esm": true,

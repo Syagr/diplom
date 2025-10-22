@@ -1,87 +1,240 @@
-import { PrismaClient } from '@prisma/client';
+// services/notification.service.ts
+import prisma from '@/utils/prisma.js';
 import { logger } from '../libs/logger.js';
 import SocketService from './socket.service.js';
 
-const prisma = new PrismaClient();
-const p: any = prisma;
+// ---- Domain types ----
+export type NotificationType =
+  | 'ORDER_CREATED'
+  | 'ORDER_UPDATED'
+  | 'PAYMENT_RECEIVED'
+  | 'TOW_ASSIGNED'
+  | 'INSPECTION_COMPLETED'
+  | 'SYSTEM_ALERT';
+
+export type NotificationPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+export type NotificationChannel = 'IN_APP' | 'EMAIL';
 
 export interface NotificationData {
-  type: 'ORDER_CREATED' | 'ORDER_UPDATED' | 'PAYMENT_RECEIVED' | 'TOW_ASSIGNED' | 'INSPECTION_COMPLETED' | 'SYSTEM_ALERT';
+  type: NotificationType;
   title: string;
   message: string;
-  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+  priority: NotificationPriority;
   userId: number;
   orderId?: number;
   metadata?: Record<string, any>;
   channels: NotificationChannel[];
-  action?: {
-    label: string;
-    url: string;
-  };
+  action?: { label: string; url: string };
 }
 
-export type NotificationChannel = 'IN_APP' | 'EMAIL' | 'SMS' | 'TELEGRAM' | 'PUSH';
-
-class NotificationService {
+export default class NotificationService {
   private socketService?: SocketService;
 
-  constructor() {}
+  constructor(socketService?: SocketService) {
+    this.socketService = socketService;
+  }
 
-  /**
-   * Set socket service for real-time notifications
-   */
   setSocketService(socketService: SocketService) {
     this.socketService = socketService;
   }
 
+  // ========== Public API ==========
+
   /**
-   * Send notification through specified channels
+   * Persist notification and dispatch via requested channels.
+   * Records per-channel delivery results.
    */
   async sendNotification(data: NotificationData): Promise<void> {
-    try {
-      // Save notification to database
-  const notification = await p.notification.create({
-        data: {
-          type: data.type,
-          title: data.title,
-          message: data.message,
-          priority: data.priority,
-          userId: data.userId,
-          orderId: data.orderId,
-          metadata: data.metadata || {},
-          channels: data.channels,
-          action: data.action,
-          status: 'SENT'
-        }
-      });
-
-      // Send through each channel
-      const promises = data.channels.map(channel => 
-        this.sendThroughChannel(channel, data, notification.id)
-      );
-
-      await Promise.allSettled(promises);
-
-      logger.info('Notification sent', {
-        notificationId: notification.id,
-        userId: data.userId,
+    // persist base notification first
+    const notification = await prisma.notification.create({
+      data: {
         type: data.type,
-        channels: data.channels
-      });
-
-    } catch (error) {
-      logger.error('Failed to send notification', {
+        title: data.title,
+        message: data.message,
+        priority: data.priority,
         userId: data.userId,
-        type: data.type,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      throw error;
-    }
+        orderId: data.orderId ?? null,
+        metadata: data.metadata ?? {},
+        channels: data.channels,
+        action: data.action ?? null,
+        status: 'SENT', // logical creation status (per-channel statuses live in notificationDelivery)
+      },
+      select: { id: true },
+    });
+
+    // dispatch all channels (independent best-effort)
+    const results = await Promise.allSettled(
+      data.channels.map((channel) => this.sendThroughChannel(channel, data, notification.id))
+    );
+
+    const delivered = results.filter((r) => r.status === 'fulfilled').length;
+    logger.info('Notification processed', {
+      notificationId: notification.id,
+      userId: data.userId,
+      type: data.type,
+      channels: data.channels,
+      delivered,
+      failed: results.length - delivered,
+    });
   }
 
   /**
-   * Send notification through specific channel
+   * Get user notification preferences (with defaults).
    */
+  async getUserPreferences(userId: number): Promise<{
+    channels: NotificationChannel[];
+    types: string[];
+  }> {
+    const pref = await prisma.notificationPreference.findUnique({
+      where: { userId }, // numeric FK
+    });
+
+    return {
+      channels: (pref?.enabledChannels as NotificationChannel[]) ?? ['IN_APP'],
+      types: pref?.enabledTypes ?? [],
+    };
+  }
+
+  /**
+   * Update user notification preferences (upsert).
+   */
+  async updateUserPreferences(
+    userId: number,
+    preferences: { channels?: NotificationChannel[]; types?: string[] }
+  ): Promise<void> {
+    await prisma.notificationPreference.upsert({
+      where: { userId },
+      update: {
+        enabledChannels: preferences.channels,
+        enabledTypes: preferences.types,
+      },
+      create: {
+        userId,
+        enabledChannels: preferences.channels ?? ['IN_APP'],
+        enabledTypes: preferences.types ?? [],
+      },
+    });
+
+    logger.info('User notification preferences updated', { userId });
+  }
+
+  /**
+   * Mark one notification as read for user (idempotent).
+   */
+  async markAsRead(notificationId: number, userId: number): Promise<void> {
+    await prisma.notification.updateMany({
+      where: { id: notificationId, userId },
+      data: { readAt: new Date() },
+    });
+  }
+
+  /**
+   * Paginated notifications & counters.
+   */
+  async getUserNotifications(
+    userId: number,
+    options: { page?: number; limit?: number; unreadOnly?: boolean; type?: NotificationType } = {}
+  ): Promise<{ notifications: any[]; total: number; unreadCount: number }> {
+    const page = Math.max(1, Number(options.page ?? 1));
+    const limit = Math.min(100, Math.max(1, Number(options.limit ?? 20)));
+    const skip = (page - 1) * limit;
+
+    const where: any = {
+      userId,
+      ...(options.unreadOnly ? { readAt: null } : {}),
+      ...(options.type ? { type: options.type } : {}),
+    };
+
+    const [notifications, total, unreadCount] = await Promise.all([
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          order: { select: { id: true, status: true } },
+        },
+      }),
+      prisma.notification.count({ where }),
+      prisma.notification.count({ where: { userId, readAt: null } }),
+    ]);
+
+    return { notifications, total, unreadCount };
+  }
+
+  /**
+   * Unread counter for a user
+   */
+  async getUnreadCount(userId: number): Promise<number> {
+  return prisma.notification.count({ where: { userId, readAt: null } });
+  }
+
+  /**
+   * High-level helper for order-related events; honors client preferences.
+   */
+  async sendOrderNotification(
+    type: Exclude<NotificationType, 'SYSTEM_ALERT' | 'PAYMENT_RECEIVED'>,
+    orderId: number,
+    customMessage?: string
+  ): Promise<void> {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: { client: true },
+    });
+    if (!order) throw new Error('ORDER_NOT_FOUND');
+    // Resolve recipient user for the client (first linked user)
+    const recipientUser = await prisma.user.findFirst({ where: { clientId: order.clientId }, select: { id: true } });
+    if (!recipientUser) {
+      // no linked user to receive notifications
+      return;
+    }
+
+    const templates: Record<
+      Exclude<NotificationType, 'SYSTEM_ALERT' | 'PAYMENT_RECEIVED'>,
+      { title: string; message: (o: any) => string }
+    > = {
+      ORDER_CREATED: {
+        title: 'Новая заявка создана',
+        message: (o) =>
+          customMessage ??
+          `Заявка #${o.orderNumber ?? o.id} успешно создана и передана на рассмотрение`,
+      },
+      ORDER_UPDATED: {
+        title: 'Статус заявки изменён',
+        message: (o) =>
+          customMessage ?? `Заявка #${o.orderNumber ?? o.id} обновлена. Новый статус: ${o.status}`,
+      },
+      TOW_ASSIGNED: {
+        title: 'Эвакуатор назначен',
+        message: (o) => customMessage ?? `К заявке #${o.orderNumber ?? o.id} назначен эвакуатор`,
+      },
+      INSPECTION_COMPLETED: {
+        title: 'Осмотр завершён',
+        message: (o) => customMessage ?? `Осмотр по заявке #${o.orderNumber ?? o.id} завершён`,
+      },
+    };
+
+    const tpl = templates[type] ?? {
+      title: 'Обновление заявки',
+      message: (_o: any) => customMessage ?? 'Статус вашей заявки изменился',
+    };
+
+    // client preferences
+    const prefs = await this.getUserPreferences(recipientUser.id);
+    await this.sendNotification({
+      type,
+      title: tpl.title,
+      message: tpl.message(order),
+      priority: type === 'ORDER_CREATED' ? 'HIGH' : 'MEDIUM',
+      userId: recipientUser.id,
+      orderId,
+      channels: prefs.channels,
+      action: { label: 'Открыть заявку', url: `/orders/${orderId}` },
+    });
+  }
+
+  // ========== Private helpers ==========
+
   private async sendThroughChannel(
     channel: NotificationChannel,
     data: NotificationData,
@@ -95,418 +248,119 @@ class NotificationService {
         case 'EMAIL':
           await this.sendEmailNotification(data);
           break;
-        case 'SMS':
-          await this.sendSMSNotification(data);
-          break;
-        case 'TELEGRAM':
-          await this.sendTelegramNotification(data);
-          break;
-        case 'PUSH':
-          await this.sendPushNotification(data);
-          break;
       }
 
-      // Update delivery status
-  await p.notificationDelivery.create({
+      // mark delivered for this channel
+      await prisma.notificationDelivery.create({
         data: {
-          notificationId: String(notificationId),
+          notificationId, // numeric FK
           channel,
           status: 'DELIVERED',
-          deliveredAt: new Date()
-        }
+          deliveredAt: new Date(),
+        },
       });
-
-    } catch (error) {
-      // Log delivery failure
-  await p.notificationDelivery.create({
+    } catch (err) {
+      // per-channel failure is non-fatal; record and continue
+      await prisma.notificationDelivery.create({
         data: {
-          notificationId: String(notificationId),
+          notificationId,
           channel,
           status: 'FAILED',
-          error: error instanceof Error ? error.message : String(error)
-        }
+          error: err instanceof Error ? err.message : String(err),
+        },
       });
 
       logger.error(`Failed to send ${channel} notification`, {
         notificationId,
         userId: data.userId,
-        error: error instanceof Error ? error.message : String(error)
+        error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
-  /**
-   * Send in-app notification via WebSocket
-   */
-  private async sendInAppNotification(data: NotificationData): Promise<void> {
-    if (!this.socketService) {
-      throw new Error('Socket service not initialized');
+  private mapPriorityToToastType(priority: NotificationPriority): 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR' {
+    switch (priority) {
+      case 'LOW':
+        return 'INFO';
+      case 'MEDIUM':
+        return 'SUCCESS';
+      case 'HIGH':
+        return 'WARNING';
+      case 'URGENT':
+      default:
+        return 'ERROR';
     }
+  }
+
+  private async sendInAppNotification(data: NotificationData): Promise<void> {
+    if (!this.socketService) throw new Error('Socket service not initialized');
 
     this.socketService.emitNotification(data.userId, {
-      type: this.mapPriorityToType(data.priority),
+      type: this.mapPriorityToToastType(data.priority),
       title: data.title,
       message: data.message,
-      action: data.action
+      action: data.action,
     });
   }
 
-  /**
-   * Send email notification
-   */
   private async sendEmailNotification(data: NotificationData): Promise<void> {
-    // Get user email
-  const user = await p.user.findUnique({
-      where: { id: data.userId },
-      select: { email: true, name: true }
-    });
-
-    if (!user?.email) {
-      throw new Error('User email not found');
-    }
-
-    // TODO: Implement email service (SendGrid, AWS SES, etc.)
-    const emailData = {
-      to: user.email,
-      subject: data.title,
-  html: this.generateEmailTemplate(data, user.name || user.email),
-      metadata: {
-        notificationType: data.type,
-        userId: data.userId,
-        orderId: data.orderId
-      }
-    };
-
-    // Mock email sending
-    logger.info('Email notification would be sent', emailData);
-  }
-
-  /**
-   * Send SMS notification
-   */
-  private async sendSMSNotification(data: NotificationData): Promise<void> {
-    // Get user phone
     const user = await prisma.user.findUnique({
       where: { id: data.userId },
-      select: { phone: true }
+      select: { email: true, name: true },
     });
+    if (!user?.email) throw new Error('User email not found');
 
-    if (!user?.phone) {
-      throw new Error('User phone not found');
-    }
-
-    // TODO: Implement SMS service (Twilio, etc.)
-    const smsData = {
-      to: user.phone,
-      body: `${data.title}\n${data.message}`,
-      metadata: {
-        notificationType: data.type,
-        userId: data.userId
-      }
+    // TODO: integrate real email provider (SES/SendGrid/Mailgun)
+    const emailPayload = {
+      to: user.email,
+      subject: data.title,
+      html: this.generateEmailTemplate(data, user.name ?? undefined),
+      headers: { 'X-Notification-Type': data.type, 'X-Order-Id': String(data.orderId ?? '') },
     };
 
-    // Mock SMS sending
-    logger.info('SMS notification would be sent', smsData);
+    logger.info('Email notification (mock send)', emailPayload);
   }
 
-  /**
-   * Send Telegram notification
-   */
-  private async sendTelegramNotification(data: NotificationData): Promise<void> {
-    // Get user Telegram chat ID
-  const userTelegram = await p.userTelegram.findUnique({
-      where: { userId: data.userId }
-    });
-
-    if (!userTelegram?.chatId) {
-      throw new Error('User Telegram chat ID not found');
-    }
-
-    // TODO: Implement Telegram bot API
-    const telegramData = {
-      chatId: userTelegram.chatId,
-      text: `*${data.title}*\n\n${data.message}`,
-      parseMode: 'Markdown',
-      metadata: {
-        notificationType: data.type,
-        userId: data.userId
-      }
-    };
-
-    // Mock Telegram sending
-    logger.info('Telegram notification would be sent', telegramData);
-  }
-
-  /**
-   * Send push notification
-   */
-  private async sendPushNotification(data: NotificationData): Promise<void> {
-    // Get user device tokens
-  const devices = await p.userDevice.findMany({
-      where: {
-        userId: data.userId,
-        isActive: true
-      }
-    });
-
-    if (devices.length === 0) {
-      throw new Error('No active devices found for user');
-    }
-
-    // TODO: Implement push notification service (FCM, APNs)
-    const pushData = {
-      tokens: devices.map(d => d.pushToken).filter(Boolean),
-      title: data.title,
-      body: data.message,
-      data: {
-        type: data.type,
-        orderId: data.orderId,
-        action: data.action
-      }
-    };
-
-    // Mock push notification sending
-    logger.info('Push notification would be sent', pushData);
-  }
-
-  /**
-   * Get user notification preferences
-   */
-  async getUserPreferences(userId: number): Promise<{
-    channels: NotificationChannel[];
-    types: string[];
-  }> {
-  const preferences = await p.notificationPreference.findUnique({
-      where: { userId: String(userId) }
-    });
-
-    return {
-      channels: preferences?.enabledChannels as NotificationChannel[] || ['IN_APP'],
-      types: preferences?.enabledTypes || []
-    };
-  }
-
-  /**
-   * Update user notification preferences
-   */
-  async updateUserPreferences(
-    userId: number,
-    preferences: {
-      channels?: NotificationChannel[];
-      types?: string[];
-    }
-  ): Promise<void> {
-  await p.notificationPreference.upsert({
-      where: { userId: String(userId) },
-      update: {
-        enabledChannels: preferences.channels,
-        enabledTypes: preferences.types
-      },
-      create: {
-        userId: String(userId),
-        enabledChannels: preferences.channels || ['IN_APP'],
-        enabledTypes: preferences.types || []
-      }
-    });
-
-    logger.info('User notification preferences updated', {
-      userId,
-      preferences
-    });
-  }
-
-  /**
-   * Mark notification as read
-   */
-  async markAsRead(notificationId: number, userId: number): Promise<void> {
-  await p.notification.updateMany({
-      where: {
-        id: notificationId,
-        userId: userId
-      },
-      data: {
-        readAt: new Date()
-      }
-    });
-  }
-
-  /**
-   * Get user notifications with pagination
-   */
-  async getUserNotifications(
-    userId: number,
-    options: {
-      page?: number;
-      limit?: number;
-      unreadOnly?: boolean;
-      type?: string;
-    } = {}
-  ): Promise<{
-    notifications: any[];
-    total: number;
-    unreadCount: number;
-  }> {
-    const { page = 1, limit = 20, unreadOnly = false, type } = options;
-    const skip = (page - 1) * limit;
-
-    const where = {
-      userId,
-      ...(unreadOnly && { readAt: null }),
-      ...(type && { type })
-    } as any;
-
-    const [notifications, total, unreadCount] = await Promise.all([
-  p.notification.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          order: {
-            select: {
-              id: true,
-              status: true
-            }
-          }
-        }
-      }),
-  p.notification.count({ where }),
-  p.notification.count({
-        where: { userId, readAt: null }
-      })
-    ]);
-
-    return {
-      notifications,
-      total,
-      unreadCount
-    };
-  }
-
-  /**
-   * Send order-related notifications
-   */
-  async sendOrderNotification(
-    type: NotificationData['type'],
-    orderId: string,
-    customMessage?: string
-  ): Promise<void> {
-  const order = await p.order.findUnique({
-      where: { id: orderId },
-      include: {
-        client: true,
-        assignedTo: true
-      }
-    });
-
-    if (!order) {
-      throw new Error('Order not found');
-    }
-
-    const messages = {
-      ORDER_CREATED: {
-        title: 'Новое заявление создано',
-        message: customMessage || `Заявление #${order.orderNumber} успешно создано и передано на рассмотрение`
-      },
-      ORDER_UPDATED: {
-        title: 'Статус заявления изменен',
-        message: customMessage || `Заявление #${order.orderNumber} обновлено. Новый статус: ${order.status}`
-      },
-      TOW_ASSIGNED: {
-        title: 'Эвакуатор назначен',
-        message: customMessage || `К заявлению #${order.orderNumber} назначен эвакуатор`
-      },
-      INSPECTION_COMPLETED: {
-        title: 'Осмотр завершен',
-        message: customMessage || `Осмотр по заявлению #${order.orderNumber} завершен`
-      }
-    };
-
-    const { title, message } = messages[type] || {
-      title: 'Обновление заявления',
-      message: customMessage || 'Статус вашего заявления изменился'
-    };
-
-    // Get user preferences
-    const preferences = await this.getUserPreferences(order.clientId);
-
-    await this.sendNotification({
-      type,
-      title,
-      message,
-      priority: type === 'ORDER_CREATED' ? 'HIGH' : 'MEDIUM',
-      userId: order.clientId,
-      orderId: Number(orderId),
-      channels: preferences.channels,
-      action: {
-        label: 'Просмотреть заявление',
-        url: `/orders/${orderId}`
-      }
-    });
-
-    // Also notify assigned employee if exists
-    if (order.assignedToId && order.assignedToId !== order.clientId) {
-      await this.sendNotification({
-        type,
-        title: `${title} (Назначено вам)`,
-        message,
-        priority: 'MEDIUM',
-        userId: order.assignedToId,
-        orderId: Number(orderId),
-        channels: ['IN_APP'],
-        action: {
-          label: 'Просмотреть заявление',
-          url: `/orders/${orderId}`
-        }
-      });
-    }
-  }
-
-  /**
-   * Helper methods
-   */
-  private mapPriorityToType(priority: string): 'INFO' | 'SUCCESS' | 'WARNING' | 'ERROR' {
-    switch (priority) {
-      case 'LOW': return 'INFO';
-      case 'MEDIUM': return 'SUCCESS';
-      case 'HIGH': return 'WARNING';
-      case 'URGENT': return 'ERROR';
-      default: return 'INFO';
-    }
-  }
+  // SMS, Telegram and mobile push channels are removed in web/web3-only scope
 
   private generateEmailTemplate(data: NotificationData, firstName?: string): string {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>${data.title}</title>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .header { background: #007bff; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; }
-          .footer { background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; }
-          .button { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>AutoAssist+</h1>
-        </div>
-        <div class="content">
-          <h2>${data.title}</h2>
-          ${firstName ? `<p>Здравствуйте, ${firstName}!</p>` : ''}
-          <p>${data.message}</p>
-          ${data.action ? `<p><a href="${data.action.url}" class="button">${data.action.label}</a></p>` : ''}
-        </div>
-        <div class="footer">
-          <p>AutoAssist+ - ваш надежный помощник на дороге</p>
-        </div>
-      </body>
-      </html>
-    `;
+    const safeTitle = escapeHtml(data.title);
+    const safeMsg = escapeHtml(data.message);
+    const cta = data.action
+      ? `<p><a href="${escapeAttr(data.action.url)}" class="button">${escapeHtml(data.action.label)}</a></p>`
+      : '';
+
+    return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${safeTitle}</title>
+<style>
+body{font-family:Arial,sans-serif;line-height:1.6;color:#333}
+.header{background:#007bff;color:#fff;padding:20px;text-align:center}
+.content{padding:20px}
+.footer{background:#f8f9fa;padding:15px;text-align:center;font-size:.9em}
+.button{display:inline-block;padding:10px 20px;background:#007bff;color:#fff;text-decoration:none;border-radius:5px}
+</style></head>
+<body>
+  <div class="header"><h1>AutoAssist+</h1></div>
+  <div class="content">
+    <h2>${safeTitle}</h2>
+    ${firstName ? `<p>Здравствуйте, ${escapeHtml(firstName)}!</p>` : ''}
+    <p>${safeMsg}</p>
+    ${cta}
+  </div>
+  <div class="footer"><p>AutoAssist+ — ваш надёжный помощник на дороге</p></div>
+</body></html>`;
   }
 }
 
-export default NotificationService;
+// ---- tiny escaping helpers for email ----
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+function escapeAttr(s: string) {
+  return escapeHtml(s).replace(/'/g, '&#39;');
+}
+// (no Markdown escaping needed)

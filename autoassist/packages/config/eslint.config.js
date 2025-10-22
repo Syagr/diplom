@@ -110,7 +110,7 @@ module.exports = {
     },
     // Node.js specific rules
     {
-      files: ['**/apps/api/**/*.ts', '**/apps/bot/**/*.ts'],
+      files: ['**/apps/api/**/*.ts'],
       extends: ['plugin:node/recommended'],
       plugins: ['node'],
       rules: {

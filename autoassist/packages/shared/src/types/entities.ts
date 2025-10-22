@@ -2,7 +2,6 @@
 
 export interface IClient {
   id: string;
-  telegramId?: string;
   phone: string;
   firstName: string;
   lastName: string;

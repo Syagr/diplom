@@ -114,7 +114,7 @@ Comprehensive insurance and towing assistance platform API server.
 - **Insurance Service**: Rule-based policy generation, client discount calculations
 - **Payments Service**: Multi-provider support (LiqPay, crypto, escrow smart contracts)
 - **Tow Service**: Quote calculations, driver assignment, real-time tracking
-- **Notification Service**: Multi-channel notifications (in-app, email, SMS, Telegram, push)
+- **Notification Service**: In-app and email notifications
 - **Socket Service**: Real-time communication via WebSocket
 
 ### API Features
@@ -242,8 +242,6 @@ LIQPAY_PRIVATE_KEY="your-liqpay-secret"
 SMTP_HOST="smtp.gmail.com"
 SMTP_USER="your-email@gmail.com"
 SMTP_PASS="your-app-password"
-TELEGRAM_BOT_TOKEN="your-telegram-bot-token"
-FCM_SERVER_KEY="your-fcm-server-key"
 
 # Blockchain
 WEB3_PROVIDER_URL="https://mainnet.infura.io/v3/your-project-id"

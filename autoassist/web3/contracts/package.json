@@ -8,7 +8,7 @@
     "deploy": "hardhat run scripts/deploy.ts",
     "deploy:testnet": "hardhat run scripts/deploy.ts --network polygonAmoy",
     "verify": "hardhat verify",
-    "lint": "solhint 'contracts/**/*.sol'",
+  "lint": "solhint \"contracts/**/*.sol\"",
     "format": "prettier -w ."
   },
   "devDependencies": {

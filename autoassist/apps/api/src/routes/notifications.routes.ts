@@ -1,424 +1,248 @@
 import { Router } from 'express';
-import type { Request, Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
+import { z } from 'zod';
+import { authenticate } from '@/middleware/auth.middleware.js';
 import NotificationService from '@/services/notification.service.js';
-import { logger } from '../libs/logger.js';
 import prisma from '@/utils/prisma.js';
+import { logger } from '../libs/logger.js';
 
 const router = Router();
 const notificationService = new NotificationService();
 
-// Extend Request interface to include user
-interface AuthenticatedRequest extends Request {
-  user?: {
-    id: number;
-    email: string;
-    role: string;
-  };
-}
+// ---- helpers ----
+type AuthUser = { id: number; email?: string; role?: string };
+const getAuth = (req: Request) => (req as any).user as AuthUser | undefined;
+const isAdmin = (u?: AuthUser) => (u?.role ?? '').toString().toLowerCase() === 'admin';
+const safeTrunc = (s: string, n = 200) => (s.length > n ? s.slice(0, n) + '…' : s);
+
+// ---- validation schemas ----
+const ListQuery = z.object({
+  page: z.coerce.number().int().positive().default(1).transform(v => Math.min(v, 1000)),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  unreadOnly: z
+    .union([z.literal('true'), z.literal('false')])
+    .optional()
+    .transform(v => v === 'true'),
+  type: z.string().min(1).max(64).optional(),
+});
+
+const IdParam = z.object({ id: z.coerce.number().int().positive() });
+
+const ChannelsEnum = z.enum(['IN_APP', 'EMAIL']);
+const UpdatePrefsBody = z.object({
+  channels: z.array(ChannelsEnum).min(1).max(2).optional(),
+  types: z.array(z.string().min(1).max(64)).optional(),
+});
+
+const TestBody = z.object({
+  userId: z.coerce.number().int().positive().optional(),
+  type: z.string().min(1).max(64).default('SYSTEM_ALERT'),
+  title: z.string().min(1).max(120).default('Test Notification'),
+  message: z.string().min(1).max(2000).default('This is a test notification from AutoAssist+'),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH']).default('LOW'),
+  channels: z.array(ChannelsEnum).min(1).max(2).default(['IN_APP']),
+});
+
+const BroadcastBody = z.object({
+  title: z.string().min(1).max(120),
+  message: z.string().min(1).max(2000),
+  priority: z.enum(['LOW', 'MEDIUM', 'HIGH']).default('MEDIUM'),
+  targetRole: z.string().min(1).max(64).optional(), // очікуєш 'client'/'manager'/'admin' тощо
+  channels: z.array(ChannelsEnum).min(1).max(2).default(['IN_APP']),
+});
+
+// ---- secure all routes ----
+router.use(authenticate);
 
 /**
- * @route GET /api/notifications
- * @desc Get user notifications with pagination
- * @access Private
+ * GET /api/notifications
  */
-router.get('/', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        error: 'UNAUTHORIZED',
-        message: 'Authentication required'
-      });
-      return;
-    }
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
 
-    const {
-      page = '1',
-      limit = '20',
-      unreadOnly = 'false',
-      type
-    } = req.query;
+    const q = ListQuery.parse(req.query);
+    const result = await notificationService.getUserNotifications(user.id, {
+      page: q.page,
+      limit: q.limit,
+      unreadOnly: q.unreadOnly,
+      type: q.type as any,
+    });
 
-    const options = {
-      page: parseInt(page as string, 10),
-      limit: parseInt(limit as string, 10),
-      unreadOnly: unreadOnly === 'true',
-      type: type as string
-    };
-
-  const result = await notificationService.getUserNotifications(Number(req.user.id), options);
-
-    res.json({
+    return res.json({
       success: true,
       data: {
-        notifications: result.notifications.map(notification => ({
-          id: notification.id,
-          type: notification.type,
-          title: notification.title,
-          message: notification.message,
-          priority: notification.priority,
-          isRead: !!notification.readAt,
-          createdAt: notification.createdAt,
-          readAt: notification.readAt,
-          action: notification.action,
-            order: notification.order ? {
-            id: notification.order.id,
-            status: notification.order.status
-          } : null
+        notifications: result.notifications.map(n => ({
+          id: n.id,
+          type: n.type,
+          title: n.title,
+          message: n.message,
+          priority: n.priority,
+          isRead: !!n.readAt,
+          createdAt: n.createdAt,
+          readAt: n.readAt,
+          action: n.action,
+          order: n.order ? { id: n.order.id, status: n.order.status } : null,
         })),
         pagination: {
-          page: options.page,
-          limit: options.limit,
+          page: q.page,
+          limit: q.limit,
           total: result.total,
-          pages: Math.ceil(result.total / options.limit)
+          pages: Math.ceil(result.total / q.limit),
         },
-        unreadCount: result.unreadCount
-      }
+        unreadCount: result.unreadCount,
+      },
     });
-
-  } catch (error) {
-    logger.error('Failed to get notifications', {
-      userId: req.user?.id,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to get notifications'
-    });
+  } catch (e) {
+    logger.error('Failed to get notifications', { userId: getAuth(req)?.id, error: e instanceof Error ? e.message : String(e) });
+    return next(e);
   }
 });
 
 /**
- * @route GET /api/notifications/unread-count
- * @desc Get unread notifications count
- * @access Private
+ * GET /api/notifications/unread-count
  */
-router.get('/unread-count', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/unread-count', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        error: 'UNAUTHORIZED',
-        message: 'Authentication required'
-      });
-      return;
-    }
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
 
-    const result = await notificationService.getUserNotifications(Number(req.user.id), {
-      limit: 1,
-      unreadOnly: true
-    });
-
-    res.json({
-      success: true,
-      data: {
-        unreadCount: result.unreadCount
-      }
-    });
-
-  } catch (error) {
-    logger.error('Failed to get unread count', {
-      userId: req.user?.id,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to get unread count'
-    });
+    const unreadCount = await notificationService.getUnreadCount(user.id);
+    return res.json({ success: true, data: { unreadCount } });
+  } catch (e) {
+    logger.error('Failed to get unread count', { userId: getAuth(req)?.id, error: e instanceof Error ? e.message : String(e) });
+    return next(e);
   }
 });
 
 /**
- * @route PUT /api/notifications/:id/read
- * @desc Mark notification as read
- * @access Private
+ * PUT /api/notifications/:id/read
  */
-router.put('/:id/read', async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id/read', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        error: 'UNAUTHORIZED',
-        message: 'Authentication required'
-      });
-      return;
-    }
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
 
-    const { id } = req.params;
+    const { id } = IdParam.parse(req.params);
+    await notificationService.markAsRead(id, user.id);
 
-  await notificationService.markAsRead(Number(id), Number(req.user.id));
-
-    logger.info('Notification marked as read', {
-      notificationId: id,
-      userId: req.user.id
-    });
-
-    res.json({
-      success: true,
-      message: 'Notification marked as read'
-    });
-
-  } catch (error) {
+    logger.info('Notification marked as read', { notificationId: id, userId: user.id });
+    return res.json({ success: true, message: 'Notification marked as read' });
+  } catch (e) {
     logger.error('Failed to mark notification as read', {
       notificationId: req.params.id,
-      userId: req.user?.id,
-      error: error instanceof Error ? error.message : String(error)
+      userId: getAuth(req)?.id,
+      error: e instanceof Error ? e.message : String(e),
     });
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to mark notification as read'
-    });
+    return next(e);
   }
 });
 
 /**
- * @route GET /api/notifications/preferences
- * @desc Get user notification preferences
- * @access Private
+ * GET /api/notifications/preferences
  */
-router.get('/preferences', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/preferences', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        error: 'UNAUTHORIZED',
-        message: 'Authentication required'
-      });
-      return;
-    }
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
 
-  const preferences = await notificationService.getUserPreferences(Number(req.user.id));
-
-    res.json({
-      success: true,
-      data: preferences
-    });
-
-  } catch (error) {
-    logger.error('Failed to get notification preferences', {
-      userId: req.user?.id,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to get notification preferences'
-    });
+    const preferences = await notificationService.getUserPreferences(user.id);
+    return res.json({ success: true, data: preferences });
+  } catch (e) {
+    logger.error('Failed to get notification preferences', { userId: getAuth(req)?.id, error: e instanceof Error ? e.message : String(e) });
+    return next(e);
   }
 });
 
 /**
- * @route PUT /api/notifications/preferences
- * @desc Update user notification preferences
- * @access Private
+ * PUT /api/notifications/preferences
  */
-router.put('/preferences', async (req: AuthenticatedRequest, res: Response) => {
+router.put('/preferences', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        error: 'UNAUTHORIZED',
-        message: 'Authentication required'
-      });
-      return;
-    }
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
 
-    const { channels, types } = req.body;
+    const body = UpdatePrefsBody.parse(req.body);
+    await notificationService.updateUserPreferences(user.id, body);
 
-    // Validate channels
-    const validChannels = ['IN_APP', 'EMAIL', 'SMS', 'TELEGRAM', 'PUSH'];
-    if (channels && !Array.isArray(channels)) {
-      res.status(400).json({
-        error: 'INVALID_CHANNELS',
-        message: 'Channels must be an array'
-      });
-      return;
-    }
-
-    if (channels && channels.some((channel: string) => !validChannels.includes(channel))) {
-      res.status(400).json({
-        error: 'INVALID_CHANNELS',
-        message: `Valid channels are: ${validChannels.join(', ')}`
-      });
-      return;
-    }
-
-    await notificationService.updateUserPreferences(Number(req.user.id), {
-      channels,
-      types
-    });
-
-    logger.info('Notification preferences updated', {
-      userId: req.user.id,
-      channels,
-      types
-    });
-
-    res.json({
-      success: true,
-      message: 'Notification preferences updated successfully'
-    });
-
-  } catch (error) {
-    logger.error('Failed to update notification preferences', {
-      userId: req.user?.id,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to update notification preferences'
-    });
+    logger.info('Notification preferences updated', { userId: user.id, ...body });
+    return res.json({ success: true, message: 'Notification preferences updated successfully' });
+  } catch (e) {
+    logger.error('Failed to update notification preferences', { userId: getAuth(req)?.id, error: e instanceof Error ? e.message : String(e) });
+    return next(e);
   }
 });
 
 /**
- * @route POST /api/notifications/test
- * @desc Send test notification (for development)
- * @access Private (Admin only)
+ * POST /api/notifications/test  (Admin only)
  */
-router.post('/test', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/test', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        error: 'UNAUTHORIZED',
-        message: 'Authentication required'
-      });
-      return;
-    }
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    if (!isAdmin(user)) return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } });
 
-    // Only allow admins to send test notifications
-    if (req.user.role !== 'ADMIN') {
-      res.status(403).json({
-        error: 'FORBIDDEN',
-        message: 'Admin access required'
-      });
-      return;
-    }
-
-    const {
-      userId = req.user.id,
-      type = 'SYSTEM_ALERT',
-      title = 'Test Notification',
-      message = 'This is a test notification from AutoAssist+',
-      priority = 'LOW',
-      channels = ['IN_APP']
-    } = req.body;
-
+    const body = TestBody.parse(req.body);
     await notificationService.sendNotification({
-      type,
-      title,
-      message,
-      priority,
-      userId,
-      channels,
-      action: {
-        label: 'View Dashboard',
-        url: '/dashboard'
-      }
+      type: (body.type as any),
+      title: body.title,
+      message: safeTrunc(body.message, 1000),
+      priority: body.priority,
+      channels: body.channels,
+      userId: body.userId ?? user.id,
+      action: { label: 'View Dashboard', url: '/dashboard' },
     });
 
-    logger.info('Test notification sent', {
-      adminId: req.user.id,
-      targetUserId: userId,
-      type,
-      title
-    });
-
-    res.json({
-      success: true,
-      message: 'Test notification sent successfully'
-    });
-
-  } catch (error) {
-    logger.error('Failed to send test notification', {
-      adminId: req.user?.id,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to send test notification'
-    });
+    logger.info('Test notification sent', { adminId: user.id, targetUserId: body.userId ?? user.id, type: body.type, title: body.title });
+    return res.json({ success: true, message: 'Test notification sent successfully' });
+  } catch (e) {
+    logger.error('Failed to send test notification', { adminId: getAuth(req)?.id, error: e instanceof Error ? e.message : String(e) });
+    return next(e);
   }
 });
 
 /**
- * @route POST /api/notifications/broadcast
- * @desc Broadcast notification to all users or role
- * @access Private (Admin only)
+ * POST /api/notifications/broadcast  (Admin only)
  */
-router.post('/broadcast', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/broadcast', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        error: 'UNAUTHORIZED',
-        message: 'Authentication required'
-      });
-      return;
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    if (!isAdmin(user)) return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Admin access required' } });
+
+    const body = BroadcastBody.parse(req.body);
+
+  const where: any = body.targetRole ? { role: body.targetRole as any } : {};
+    const users = await prisma.user.findMany({ where, select: { id: true } });
+    if (users.length === 0) {
+      return res.status(404).json({ error: { code: 'NO_TARGETS', message: 'No users found for broadcast' } });
     }
 
-    if (req.user.role !== 'ADMIN') {
-      res.status(403).json({
-        error: 'FORBIDDEN',
-        message: 'Admin access required'
-      });
-      return;
-    }
-
-    const {
-      title,
-      message,
-      priority = 'MEDIUM',
-      targetRole,
-      channels = ['IN_APP']
-    } = req.body;
-
-    if (!title || !message) {
-      res.status(400).json({
-        error: 'MISSING_FIELDS',
-        message: 'Title and message are required'
-      });
-      return;
-    }
-
-    // Get target users
-    const whereClause = targetRole ? { role: targetRole } : {};
-    const users = await prisma.user.findMany({
-      where: whereClause,
-      select: { id: true }
-    });
-
-    // Send notifications to all users
-    const promises = users.map(user =>
+    const tasks = users.map(u =>
       notificationService.sendNotification({
         type: 'SYSTEM_ALERT',
-        title,
-        message,
-        priority,
-        userId: user.id,
-        channels
-      })
+        title: body.title,
+        message: safeTrunc(body.message, 1000),
+        priority: body.priority,
+        userId: u.id,
+        channels: body.channels,
+      }),
     );
 
-    await Promise.allSettled(promises);
+    const results = await Promise.allSettled(tasks);
+    const fulfilled = results.filter(r => r.status === 'fulfilled').length;
 
-    logger.info('Broadcast notification sent', {
-      adminId: req.user.id,
-      targetRole,
-      userCount: users.length,
-      title
-    });
+    logger.info('Broadcast notification sent', { adminId: user.id, targetRole: body.targetRole, userCount: users.length, sent: fulfilled, title: body.title });
 
-    res.json({
+    return res.json({
       success: true,
-      data: {
-        sentTo: users.length
-      },
-      message: `Notification broadcast to ${users.length} users`
+      data: { sentTo: fulfilled, total: users.length },
+      message: `Notification broadcast to ${fulfilled}/${users.length} users`,
     });
-
-  } catch (error) {
-    logger.error('Failed to broadcast notification', {
-      adminId: req.user?.id,
-      error: error instanceof Error ? error.message : String(error)
-    });
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to broadcast notification'
-    });
+  } catch (e) {
+    logger.error('Failed to broadcast notification', { adminId: getAuth(req)?.id, error: e instanceof Error ? e.message : String(e) });
+    return next(e);
   }
 });
 

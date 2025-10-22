@@ -1,9 +1,7 @@
 import React, { useState } from 'react'
 import axios from 'axios'
 
-interface OrderFormProps {
-  isTelegram?: boolean
-}
+interface OrderFormProps {}
 
 interface FormData {
   clientName: string
@@ -23,7 +21,7 @@ interface FormData {
 
 const API_URL = (import.meta as any).env?.VITE_API_URL || '' // use Vite proxy '/api' when empty
 
-function OrderForm({ isTelegram = false }: OrderFormProps) {
+function OrderForm({}: OrderFormProps) {
   const [formData, setFormData] = useState<FormData>({
     clientName: '',
     clientPhone: '',
@@ -64,7 +62,7 @@ function OrderForm({ isTelegram = false }: OrderFormProps) {
         },
         category: formData.category,
         description: formData.description || undefined,
-        channel: isTelegram ? 'telegram' : 'web',
+  channel: 'web',
         pickup: (formData.pickupLat && formData.pickupLng) ? {
           lat: parseFloat(formData.pickupLat),
           lng: parseFloat(formData.pickupLng),
@@ -122,7 +120,7 @@ function OrderForm({ isTelegram = false }: OrderFormProps) {
   }
 
   return (
-    <div className={`${isTelegram ? 'p-4' : 'max-w-2xl mx-auto'}`}>
+    <div className={`max-w-2xl mx-auto`}>
       <h2 className="text-3xl font-bold mb-6 text-center">
         Створити заявку
       </h2>

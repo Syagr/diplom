@@ -7,23 +7,9 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Client {
-  id        Int       @id @default(autoincrement())
-  name      String
-  phone     String    @unique
-  email     String?
-  tgUserId  String?   @unique
-  vehicles  Vehicle[]
-  orders    Order[]
-  users     User[]
-  loyaltyPoints Int   @default(0)
-  rating    Float?
-  achievements UserAchievement[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-
-  @@map("clients")
-}
+//// =========================
+//// Enums
+//// =========================
 
 enum Role {
   admin
@@ -31,41 +17,6 @@ enum Role {
   dispatcher
   mechanic
   customer
-}
-
-model User {
-  id            Int       @id @default(autoincrement())
-  email         String?   @unique
-  phone         String?   @unique
-  passwordHash  String
-  name          String?
-  walletAddress String?   @unique
-  role          Role      @default(customer)
-  clientId      Int?
-  client        Client?   @relation(fields: [clientId], references: [id])
-  tokenVersion  Int       @default(0)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  auditEvents   AuditEvent[]
-}
-
-model Vehicle {
-  id        Int     @id @default(autoincrement())
-  clientId  Int
-  vin       String? @unique
-  plate     String  @unique
-  make      String?
-  model     String?
-  year      Int?
-  mileage   Int?
-  nftTokenId String? @unique // NFT passport token ID
-  client    Client  @relation(fields: [clientId], references: [id])
-  orders    Order[]
-  maintenanceHistory MaintenanceRecord[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("vehicles")
 }
 
 enum OrderStatus {
@@ -81,60 +32,16 @@ enum OrderStatus {
   CANCELLED
 }
 
-model Order {
-  id          Int         @id @default(autoincrement())
-  clientId    Int
-  vehicleId   Int
-  status      OrderStatus @default(NEW)
-  category    String      // engine, transmission, suspension, electrical, etc.
-  description String?
-  channel     String      @default("web") // web, mobile, telegram
-  priority    String      @default("normal") // low, normal, high, urgent
-  locations   OrderLocation[]
-  estimate    Estimate?
-  payments    Payment[]
-  tow         TowRequest?
-  offers      InsuranceOffer[]
-  attachments Attachment[]
-  timeline    OrderTimeline[]
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  client      Client      @relation(fields: [clientId], references: [id])
-  vehicle     Vehicle     @relation(fields: [vehicleId], references: [id])
-
-  @@index([clientId])
-  @@index([status])
-
-  @@map("orders")
+enum OrderPriority {
+  low
+  normal
+  high
+  urgent
 }
 
-model OrderLocation {
-  id       Int    @id @default(autoincrement())
-  orderId  Int
-  kind     String // pickup, dropoff
-  lat      Float
-  lng      Float
-  address  String?
-  notes    String?
-  order    Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  @@map("order_locations")
-}
-
-model Estimate {
-  id        Int      @id @default(autoincrement())
-  orderId   Int      @unique
-  itemsJson Json     // parts list with prices
-  laborJson Json     // labor costs breakdown
-  total     Decimal  @db.Decimal(12,2)
-  currency  String   @default("UAH")
-  validUntil DateTime
-  approved  Boolean  @default(false)
-  approvedAt DateTime?
-  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-
-  @@map("estimates")
+enum OrderChannel {
+  web
+  mobile
 }
 
 enum PaymentStatus {
@@ -152,26 +59,6 @@ enum PaymentMethod {
   CASH
 }
 
-model Payment {
-  id         Int           @id @default(autoincrement())
-  orderId    Int
-  amount     Decimal       @db.Decimal(12,2)
-  method     PaymentMethod
-  status     PaymentStatus @default(PENDING)
-  invoiceUrl String?
-  receiptUrl String?
-  txHash     String?       // blockchain transaction hash
-  provider   String?       // liqpay, stripe, etc.
-  providerId String?       // external payment ID
-  createdAt  DateTime      @default(now())
-  completedAt DateTime?
-  order      Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  @@map("payments")
-  @@index([orderId])
-  @@index([status])
-}
-
 enum TowStatus {
   REQUESTED
   ASSIGNED
@@ -184,25 +71,6 @@ enum TowStatus {
   CANCELLED
 }
 
-model TowRequest {
-  id          Int       @id @default(autoincrement())
-  orderId     Int       @unique
-  status      TowStatus @default(REQUESTED)
-  distanceKm  Float?
-  etaMinutes  Int?
-  price       Decimal?  @db.Decimal(12,2)
-  partnerId   Int?      // tow truck company
-  driverName  String?
-  driverPhone String?
-  vehicleInfo String?   // tow truck details
-  trackingUrl String?
-  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@map("tow_requests")
-}
-
 enum InsuranceOfferStatus {
   OFFERED
   ACCEPTED
@@ -212,64 +80,11 @@ enum InsuranceOfferStatus {
   CLAIMED
 }
 
-model InsuranceOffer {
-  id          Int                   @id @default(autoincrement())
-  orderId     Int
-  code        String                // KASKO_GLASS, BREAKDOWN_EXTENDED, etc.
-  title       String
-  description String?
-  price       Decimal               @db.Decimal(12,2)
-  duration    Int?                  // months
-  coverage    Json?                 // coverage details
-  status      InsuranceOfferStatus  @default(OFFERED)
-  validUntil  DateTime?
-  activatedAt DateTime?
-  expiresAt   DateTime?
-  order       Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  createdAt   DateTime              @default(now())
-
-  @@map("insurance_offers")
-}
-
 enum AttachmentType {
   PHOTO
   VIDEO
   DOCUMENT
   AUDIO
-}
-
-model Attachment {
-  id        Int            @id @default(autoincrement())
-  orderId   Int
-  type      AttachmentType
-  url       String
-  filename  String?
-  size      Int?           // bytes
-  meta      Json?          // metadata (dimensions, duration, etc.)
-  createdAt DateTime       @default(now())
-  order     Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  // new fields (extended)
-  objectKey  String?        @db.Text
-  contentType String?
-  status      AttachmentStatus @default(pending)
-  removedAt   DateTime?
-  createdBy   Int?
-
-  @@index([orderId])
-  @@index([status])
-
-  @@map("attachments")
-}
-
-// Webhook events to ensure idempotent processing
-model WebhookEvent {
-  id         String   @id
-  type       String
-  receivedAt DateTime @default(now())
-  payload    Json?
-  handled    Boolean  @default(false)
-
-  @@map("webhook_events")
 }
 
 enum AttachmentStatus {
@@ -278,79 +93,597 @@ enum AttachmentStatus {
   removed
 }
 
+enum OrderItemType {
+  PART
+  LABOR
+  FEE
+}
+
+// Note: legacy Notification enums removed in favor of a simplified notifications schema
+
+//// =========================
+//// Core: Users / Clients / Vehicles
+//// =========================
+
+model Client {
+  id            Int                  @id @default(autoincrement())
+  name          String
+  phone         String               @unique
+  email         String?
+  vehicles      Vehicle[]
+  orders        Order[]
+  users         User[]
+  loyaltyPoints Int                  @default(0)
+  rating        Float?
+  achievements  UserAchievement[]
+  loyaltyTx     LoyaltyTransaction[]
+  reviews       Review[]
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@map("clients")
+}
+
+model User {
+  id            Int      @id @default(autoincrement())
+  email         String?  @unique
+  phone         String?  @unique
+  passwordHash  String
+  name          String?
+  walletAddress String?  @unique // web3 wallet
+  role          Role     @default(customer)
+  clientId      Int?
+  client        Client?  @relation(fields: [clientId], references: [id])
+  tokenVersion  Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // relations
+  auditEvents            AuditEvent[]
+  webAuthnCreds          WebAuthnCredential[]
+  managedCenters         ServiceCenter[]         @relation("ServiceManagers")
+  attachments            Attachment[]            @relation("AttachmentCreator")
+  // Back-reference for timeline entries
+  timelineEntries        OrderTimeline[]
+  // Notifications
+  notifications          Notification[]
+  notificationPreference NotificationPreference?
+
+  @@map("users")
+}
+
+model Vehicle {
+  id                 Int                 @id @default(autoincrement())
+  clientId           Int
+  vin                String?             @unique
+  plate              String              @unique
+  make               String?
+  model              String?
+  year               Int?
+  mileage            Int?
+  nftTokenId         String?             @unique // NFT "паспорт авто"
+  nftChain           String? // e.g., "polygon"
+  nftContract        String? // контракт, если нужен
+  client             Client              @relation(fields: [clientId], references: [id])
+  orders             Order[]
+  maintenanceHistory MaintenanceRecord[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@map("vehicles")
+}
+
+//// =========================
+//// Service Centers / Scheduling
+//// =========================
+
+model ServiceCenter {
+  id            Int           @id @default(autoincrement())
+  name          String
+  phone         String?
+  email         String?
+  lat           Float
+  lng           Float
+  address       String?
+  city          String?
+  scheduleJson  Json? // часы работы
+  amenitiesJson Json? // опции: wifi/кофе/и т.п.
+  rating        Float? // агрегированный рейтинг
+  orders        Order[]
+  appointments  Appointment[]
+  managers      User[]        @relation("ServiceManagers")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([lat, lng])
+  @@index([city])
+  @@map("service_centers")
+}
+
+model Appointment {
+  id              Int      @id @default(autoincrement())
+  serviceCenterId Int
+  orderId         Int?     @unique
+  startsAt        DateTime
+  endsAt          DateTime
+  bay             String? // рабочее место/пост
+  status          String   @default("booked") // booked/rescheduled/cancelled/completed
+  notes           String?
+
+  serviceCenter ServiceCenter @relation(fields: [serviceCenterId], references: [id], onDelete: Cascade)
+  order         Order?        @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([serviceCenterId, startsAt])
+  @@index([status])
+  @@map("appointments")
+}
+
+//// =========================
+//// Orders / Items / Estimates / Timeline
+//// =========================
+
+model Order {
+  id                  Int                  @id @default(autoincrement())
+  seedKey             String?              @unique // удобно для идемпотентных сидов
+  clientId            Int
+  vehicleId           Int
+  serviceCenterId     Int?
+  status              OrderStatus          @default(NEW)
+  category            String // engine, transmission, suspension, electrical, ...
+  description         String?
+  channel             OrderChannel         @default(web)
+  priority            OrderPriority        @default(normal)
+  locations           OrderLocation[]
+  estimate            Estimate?
+  payments            Payment[]
+  tow                 TowRequest?
+  offers              InsuranceOffer[]
+  policy              Policy?
+  attachments         Attachment[]
+  timeline            OrderTimeline[]
+  items               OrderItem[]
+  appointment         Appointment?
+  // Back-relations for auxiliary entities
+  notifications       Notification[]
+  reviews             Review[]
+  loyaltyTransactions LoyaltyTransaction[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  client        Client         @relation(fields: [clientId], references: [id])
+  vehicle       Vehicle        @relation(fields: [vehicleId], references: [id])
+  serviceCenter ServiceCenter? @relation(fields: [serviceCenterId], references: [id])
+
+  @@index([clientId])
+  @@index([status])
+  @@index([serviceCenterId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          Int           @id @default(autoincrement())
+  orderId     Int
+  type        OrderItemType
+  sku         String?
+  name        String
+  quantity    Decimal       @db.Decimal(12, 3) // поддержка дробных часов
+  unit        String? // pcs/hr/…
+  unitPrice   Decimal       @db.Decimal(12, 2)
+  discountPct Int?
+  total       Decimal       @db.Decimal(12, 2)
+  meta        Json?
+
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([type])
+  @@map("order_items")
+}
+
+model OrderLocation {
+  id      Int     @id @default(autoincrement())
+  orderId Int
+  kind    String // pickup, dropoff
+  lat     Float
+  lng     Float
+  address String?
+  notes   String?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_locations")
+}
+
+model Estimate {
+  id         Int       @id @default(autoincrement())
+  orderId    Int       @unique
+  itemsJson  Json // parts list with prices
+  laborJson  Json // labor costs breakdown
+  total      Decimal   @db.Decimal(12, 2)
+  currency   String    @default("UAH")
+  validUntil DateTime
+  approved   Boolean   @default(false)
+  approvedAt DateTime?
+
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@map("estimates")
+}
+
+// =========================
+// Calculation Profiles (admin-controlled pricing)
+// =========================
+
+model CalcProfile {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique // ECONOMY, STANDARD, PREMIUM
+  name        String
+  partsCoeff  Float    @default(1.0)
+  laborCoeff  Float    @default(1.0)
+  nightCoeff  Float    @default(1.0)
+  urgentCoeff Float    @default(1.0)
+  suvCoeff    Float    @default(1.0)
+  laborRate   Float    @default(400)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("calc_profiles")
+}
+
 model OrderTimeline {
   id        Int      @id @default(autoincrement())
   orderId   Int
-  event     String   // status_changed, payment_received, etc.
+  event     String // status_changed, payment_received, ...
   details   Json?
-  userId    String?  // who performed the action
+  userId    Int? // кто сделал действие; null = системное
   createdAt DateTime @default(now())
-  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user  User? @relation(fields: [userId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@index([userId])
   @@map("order_timeline")
+}
+
+//// =========================
+//// Payments / Webhooks (incl. web3)
+//// =========================
+
+model Payment {
+  id          Int           @id @default(autoincrement())
+  orderId     Int
+  amount      Decimal       @db.Decimal(12, 2)
+  method      PaymentMethod
+  status      PaymentStatus @default(PENDING)
+  currency    String        @default("UAH")
+  invoiceUrl  String?
+  receiptUrl  String?
+  txHash      String? // tx hash для CRYPTO
+  provider    String? // liqpay/stripe/…
+  providerId  String? // внешний ID
+  createdAt   DateTime      @default(now())
+  completedAt DateTime?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@index([orderId])
+  @@index([status])
+  @@map("payments")
+}
+
+model WebhookEvent {
+  id         String   @id
+  type       String
+  receivedAt DateTime @default(now())
+  payload    Json?
+  handled    Boolean  @default(false)
+
+  @@index([type, receivedAt])
+  @@map("webhook_events")
+}
+
+//// =========================
+//// Tow / Partners
+//// =========================
+
+model TowPartner {
+  id          Int          @id @default(autoincrement())
+  name        String
+  phone       String?
+  rating      Float?
+  vehicleInfo String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  requests    TowRequest[]
+
+  @@map("tow_partners")
+}
+
+model TowRequest {
+  id          Int       @id @default(autoincrement())
+  orderId     Int       @unique
+  status      TowStatus @default(REQUESTED)
+  distanceKm  Float?
+  etaMinutes  Int?
+  price       Decimal?  @db.Decimal(12, 2)
+  partnerId   Int?
+  driverName  String?
+  driverPhone String?
+  vehicleInfo String?
+  trackingUrl String?
+
+  order   Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  partner TowPartner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([partnerId])
+  @@index([status])
+  @@map("tow_requests")
+}
+
+//// =========================
+//// Insurance Offers / Policies
+//// =========================
+
+model InsuranceOffer {
+  id          Int                  @id @default(autoincrement())
+  orderId     Int
+  code        String // KASKO_GLASS, BREAKDOWN_EXTENDED, ...
+  title       String
+  description String?
+  price       Decimal              @db.Decimal(12, 2)
+  duration    Int? // months
+  coverage    Json? // детали покрытия
+  status      InsuranceOfferStatus @default(OFFERED)
+  validUntil  DateTime?
+  activatedAt DateTime?
+  expiresAt   DateTime?
+
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  // Back-reference to Policy for 1:1 linkage when a specific offer becomes a policy
+  policy    Policy?
+
+  @@index([orderId])
+  @@index([status])
+  @@map("insurance_offers")
+}
+
+model Policy {
+  id         Int      @id @default(autoincrement())
+  orderId    Int      @unique
+  offerId    Int?     @unique
+  externalId String?  @unique // ID у страховой
+  provider   String
+  code       String // продукт
+  price      Decimal  @db.Decimal(12, 2)
+  currency   String   @default("UAH")
+  coverage   Json?
+  startsAt   DateTime
+  endsAt     DateTime
+  status     String   @default("active") // active/expired/cancelled/claimed
+
+  order Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  offer InsuranceOffer? @relation(fields: [offerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([provider, code])
+  @@map("policies")
+}
+
+//// =========================
+//// Attachments / Maintenance / Reviews
+//// =========================
+
+model Attachment {
+  id        Int            @id @default(autoincrement())
+  orderId   Int
+  type      AttachmentType
+  url       String
+  filename  String?
+  size      Int? // bytes
+  meta      Json? // exif/duration/…
+  createdAt DateTime       @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  // extended
+  objectKey   String?          @db.Text
+  contentType String?
+  status      AttachmentStatus @default(pending)
+  removedAt   DateTime?
+  createdBy   Int?
+  creator     User?            @relation("AttachmentCreator", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([status])
+  @@map("attachments")
 }
 
 model MaintenanceRecord {
   id          Int      @id @default(autoincrement())
   vehicleId   Int
-  type        String   // routine, repair, inspection
+  type        String // routine/repair/inspection
   description String
   mileage     Int?
-  cost        Decimal? @db.Decimal(12,2)
+  cost        Decimal? @db.Decimal(12, 2)
   performedAt DateTime
-  performedBy String?  // service center
-  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
-  createdAt   DateTime @default(now())
+  performedBy String? // сервис-центр
 
+  vehicle   Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([vehicleId, performedAt])
   @@map("maintenance_records")
 }
 
-// Gamification models
+model Review {
+  id        Int      @id @default(autoincrement())
+  clientId  Int
+  orderId   Int?
+  rating    Int // 1..5
+  comment   String?
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  order  Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+  @@index([orderId])
+  @@map("reviews")
+}
+
+//// =========================
+//// Gamification / Loyalty
+//// =========================
+
 model Achievement {
-  id          Int      @id @default(autoincrement())
-  code        String   @unique
-  title       String
-  description String
-  icon        String?
-  points      Int      @default(0)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id               Int               @id @default(autoincrement())
+  code             String            @unique
+  title            String
+  description      String
+  icon             String?
+  points           Int               @default(0)
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
   userAchievements UserAchievement[]
 
   @@map("achievements")
 }
 
 model UserAchievement {
-  id            Int         @id @default(autoincrement())
+  id            Int      @id @default(autoincrement())
   clientId      Int
   achievementId Int
-  earnedAt      DateTime    @default(now())
-  client        Client      @relation(fields: [clientId], references: [id])
-  achievement   Achievement @relation(fields: [achievementId], references: [id])
+  earnedAt      DateTime @default(now())
+
+  client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  achievement Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
 
   @@unique([clientId, achievementId])
   @@map("user_achievements")
 }
 
-// Nonces for wallet signature-based auth
+model LoyaltyTransaction {
+  id        Int      @id @default(autoincrement())
+  clientId  Int
+  kind      String // earn/redeem/adjust
+  points    Int
+  reason    String?
+  orderId   Int?
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  order  Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([clientId, createdAt])
+  @@map("loyalty_transactions")
+}
+
+//// =========================
+//// Auth: Wallet / WebAuthn / Audit
+//// =========================
+
 model WalletNonce {
-  address   String  @id
+  address   String   @id // адрес кошелька
   nonce     String
   createdAt DateTime @default(now())
 
   @@map("wallet_nonces")
 }
 
-// Central audit/event log for admin history
+model WebAuthnCredential {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  credentialId   String   @unique
+  publicKey      String
+  counter        Int      @default(0)
+  transportsJson Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("webauthn_credentials")
+}
+
 model AuditEvent {
   id        Int      @id @default(autoincrement())
   type      String
   payload   Json?
   userId    Int?
-  user      User?    @relation(fields: [userId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
 
   @@index([userId])
   @@map("audit_events")
 }
 
+//// =========================
+//// Notifications (web/web3 scope)
+//// =========================
+
+model Notification {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  type      String
+  title     String
+  message   String
+  priority  String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  orderId   Int?
+  metadata  Json?
+  channels  String[] // ['IN_APP','EMAIL']
+  action    Json?
+  status    String    @default("SENT")
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  deliveries NotificationDelivery[]
+
+  @@index([userId, createdAt])
+  @@index([orderId])
+  @@map("notifications")
+}
+
+model NotificationDelivery {
+  id             Int       @id @default(autoincrement())
+  notificationId Int
+  channel        String // IN_APP | EMAIL
+  status         String    @default("PENDING") // PENDING | DELIVERED | FAILED
+  error          String?
+  deliveredAt    DateTime?
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([notificationId, channel])
+  @@map("notification_deliveries")
+}
+
+model NotificationPreference {
+  userId          Int      @id
+  enabledChannels String[]
+  enabledTypes    String[]
+  updatedAt       DateTime @updatedAt
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}

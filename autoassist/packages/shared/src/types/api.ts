@@ -51,7 +51,6 @@ export interface RefreshTokenRequest {
 
 // Client management
 export interface CreateClientRequest {
-  telegramId?: string;
   phone: string;
   firstName: string;
   lastName: string;

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: autoassist
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/autoassist?schema=public
+      JWT_SECRET: test_access_secret
+      JWT_REFRESH_SECRET: test_refresh_secret
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint API
+        run: pnpm --filter @autoassist/api run lint
+
+      - name: Lint Web
+        run: pnpm --filter web run lint
+
+      - name: Lint Contracts
+        run: pnpm --filter contracts run lint
+
+      - name: Generate Prisma Client (API)
+        run: pnpm --filter @autoassist/api run db:generate
+
+      - name: Push Prisma schema (API)
+        run: pnpm --filter @autoassist/api run db:push
+
+      - name: Seed database (API)
+        run: pnpm --filter @autoassist/api run db:seed
+
+      - name: Typecheck API
+        run: pnpm --filter @autoassist/api run typecheck
+
+      - name: Build API
+        run: pnpm --filter @autoassist/api run build
+
+      - name: Typecheck Web
+        run: pnpm --filter web run typecheck
+
+      - name: Build Web
+        run: pnpm --filter web run build
+
+      - name: Test API
+        run: pnpm --filter @autoassist/api run test -- --ci

@@ -1,330 +1,333 @@
-import { PrismaClient } from '@prisma/client';
-import type { Estimate } from '@prisma/client';
+// estimate.service.ts
+import prisma from '../utils/prisma.js';
+import type { Prisma } from '@prisma/client';
 
-const prisma = new PrismaClient();
+const DAY_MS = 86_400_000;
+
+function httpError(code: string, status = 400, message?: string) {
+  const err: any = new Error(message || code);
+  err.code = code;
+  err.status = status;
+  return err;
+}
 
 export class EstimateService {
+  // === READ ===
   async getEstimateByOrderId(orderId: number) {
-    return await prisma.estimate.findUnique({
+    return prisma.estimate.findUnique({
       where: { orderId },
       include: {
         order: {
           include: {
-            client: {
-              select: { id: true, name: true, phone: true }
-            },
-            vehicle: {
-              select: { id: true, plate: true, make: true, model: true }
-            }
-          }
-        }
-      }
+            client: { select: { id: true, name: true, phone: true } },
+            vehicle: { select: { id: true, plate: true, make: true, model: true } },
+          },
+        },
+      },
     });
   }
 
-  async createEstimate(estimateData: {
+  async getEstimateById(estimateId: number) {
+    return prisma.estimate.findUnique({
+      where: { id: estimateId },
+      include: {
+        order: {
+          include: {
+            client: { select: { id: true, name: true, phone: true } },
+            vehicle: { select: { id: true, plate: true, make: true, model: true } },
+          },
+        },
+      },
+    });
+  }
+
+  // === CREATE ===
+  async createEstimate(input: {
     orderId: number;
     laborCost: number;
     partsCost: number;
     totalCost: number;
     estimatedDays?: number | null;
-    description?: string | null;
-    breakdown?: any;
+    description?: string | null; // колонка может отсутствовать — не пишем её
+    breakdown?: Record<string, unknown>;
   }) {
-    const estimate = await prisma.estimate.create({
-      data: {
-        orderId: estimateData.orderId,
-        itemsJson: estimateData.breakdown || {},
-        laborJson: { labor: estimateData.laborCost || 0 },
-        total: estimateData.totalCost,
-        currency: 'UAH',
-        validUntil: estimateData.estimatedDays ? new Date(Date.now() + estimateData.estimatedDays * 24 * 60 * 60 * 1000) : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-  // `Estimate` model doesn't have `description` column; skip if provided
-      },
-      include: {
-        order: {
-          include: {
-            client: {
-              select: { id: true, name: true, phone: true }
-            }
-          }
-        }
-      }
-    });
+    const expiresAt = new Date(Date.now() + (input.estimatedDays ?? 7) * DAY_MS);
 
-    // Обновляем статус заказа на QUOTE (Order.status enum exists)
-    await prisma.order.update({
-      where: { id: estimateData.orderId },
-      data: { status: 'QUOTE' }
-    });
+    return prisma.$transaction(async (tx) => {
+      // 1) проверим заказ
+      const order = await tx.order.findUnique({
+        where: { id: input.orderId },
+        select: { id: true, status: true },
+      });
+      if (!order) throw httpError('ORDER_NOT_FOUND', 404);
 
-    // Добавляем запись в timeline (use details as Json)
-    await prisma.orderTimeline.create({
-      data: {
-        orderId: estimateData.orderId,
-        event: 'Estimate created',
-        details: {
-          total: Number(estimateData.totalCost),
-          estimatedDays: estimateData.estimatedDays || null
-        }
-      }
-    });
+      // 2) идемпотентность: одна смета на заказ
+      const existing = await tx.estimate.findUnique({ where: { orderId: input.orderId } });
+      if (existing) throw httpError('ESTIMATE_EXISTS', 409);
 
-    return estimate;
-  }
-
-  async updateEstimate(estimateId: number, updateData: Partial<{
-    laborCost: number;
-    partsCost: number;
-    totalCost: number;
-    estimatedDays: number | null;
-    description: string | null;
-    breakdown: any;
-  }>) {
-    // Map incoming updateData to DB fields
-    const data: any = {};
-    if (updateData.laborCost !== undefined) data.laborJson = { labor: updateData.laborCost };
-    if (updateData.partsCost !== undefined) data.itemsJson = updateData.breakdown || {};
-    if (updateData.totalCost !== undefined) data.total = updateData.totalCost;
-    if (updateData.estimatedDays !== undefined) data.validUntil = updateData.estimatedDays ? new Date(Date.now() + updateData.estimatedDays * 24 * 60 * 60 * 1000) : undefined;
-    if (updateData.description !== undefined) data['description'] = updateData.description;
-
-    try {
-      const estimate = await prisma.estimate.update({
-        where: { id: estimateId },
-        data,
+      // 3) создаём смету
+      const estimate = await tx.estimate.create({
+        data: {
+          orderId: input.orderId,
+          itemsJson: input.breakdown ?? {},                           // детали запчастей
+          laborJson: { labor: input.laborCost ?? 0, parts: input.partsCost ?? 0 }, // структура затрат
+          total: input.totalCost,
+          currency: 'UAH',
+          validUntil: expiresAt,
+          // description: input.description ?? null, // если колонка появится
+        },
         include: {
-          order: {
-            include: {
-              client: {
-                select: { id: true, name: true, phone: true }
-              }
-            }
-          }
-        }
+          order: { include: { client: { select: { id: true, name: true, phone: true } } } },
+        },
       });
 
-      // Добавляем запись в timeline
-      await prisma.orderTimeline.create({
+      // 4) статус заказа — только если он ещё "назад" (NEW|TRIAGE|QUOTE)
+      const forwardOnly = new Set(['NEW', 'TRIAGE', 'QUOTE']);
+      if (order.status && forwardOnly.has(order.status)) {
+        await tx.order.update({ where: { id: input.orderId }, data: { status: 'QUOTE' } });
+      }
+
+      // 5) таймлайн
+      await tx.orderTimeline.create({
         data: {
-          orderId: estimate.orderId,
-          event: 'Estimate updated',
-          details: data
-        }
+          orderId: input.orderId,
+          event: 'Estimate created',
+          details: { total: Number(input.totalCost), estimatedDays: input.estimatedDays ?? null },
+        },
       });
 
       return estimate;
+    });
+  }
+
+  // === UPDATE ===
+  async updateEstimate(
+    estimateId: number,
+    updateData: Partial<{
+      laborCost: number;
+      partsCost: number;
+      totalCost: number;
+      estimatedDays: number | null;
+      description: string | null; // колонка может отсутствовать
+      breakdown: Record<string, unknown>;
+    }>
+  ) {
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const current = await tx.estimate.findUnique({
+          where: { id: estimateId },
+          select: { id: true, orderId: true, itemsJson: true, laborJson: true },
+        });
+        if (!current) return null;
+
+        // merge JSON
+        const itemsJson =
+          updateData.breakdown
+            ? { ...(current.itemsJson as Record<string, unknown> ?? {}), ...updateData.breakdown }
+            : (current.itemsJson as Record<string, unknown> ?? {});
+
+        const laborJson = {
+          ...(current.laborJson as Record<string, unknown> ?? {}),
+          ...(updateData.laborCost !== undefined ? { labor: updateData.laborCost } : {}),
+          ...(updateData.partsCost !== undefined ? { parts: updateData.partsCost } : {}),
+        };
+
+        const data: Prisma.EstimateUpdateInput = {
+          itemsJson: { set: itemsJson },
+          laborJson: { set: laborJson },
+        };
+
+        if (updateData.totalCost !== undefined) (data as any).total = updateData.totalCost;
+
+        if (updateData.estimatedDays !== undefined) {
+          (data as any).validUntil =
+            updateData.estimatedDays === null
+              ? null
+              : new Date(Date.now() + updateData.estimatedDays * DAY_MS);
+        }
+
+        // Не пишем description, если колонки нет:
+        // if (updateData.description !== undefined) (data as any).description = updateData.description;
+
+        const estimate = await tx.estimate.update({
+          where: { id: estimateId },
+          data,
+          include: {
+            order: { include: { client: { select: { id: true, name: true, phone: true } } } },
+          },
+        });
+
+        await tx.orderTimeline.create({
+          data: { orderId: estimate.orderId, event: 'Estimate updated', details: data as any },
+        });
+
+        return estimate;
+      });
     } catch (err: any) {
-      // If the record does not exist, return null so route can return 404
-      if (err && err.code === 'P2025') return null;
-      console.error('Error updating estimate:', err);
+      if (err?.code === 'P2025') return null; // not found
       throw err;
     }
   }
 
+  // === DELETE ===
   async deleteEstimate(estimateId: number) {
     try {
-      const estimate = await prisma.estimate.findUnique({
-        where: { id: estimateId },
-        select: { orderId: true }
+      return await prisma.$transaction(async (tx) => {
+        const estimate = await tx.estimate.findUnique({
+          where: { id: estimateId },
+          select: { orderId: true },
+        });
+        if (!estimate) return false;
+
+        await tx.estimate.delete({ where: { id: estimateId } });
+
+        await tx.orderTimeline.create({
+          data: { orderId: estimate.orderId, event: 'Estimate deleted' },
+        });
+
+        return true;
       });
-
-      if (!estimate) {
-        return false;
-      }
-
-      await prisma.estimate.delete({
-        where: { id: estimateId }
-      });
-
-      // Добавляем запись в timeline
-      await prisma.orderTimeline.create({
-        data: {
-          orderId: estimate.orderId,
-          event: 'Estimate deleted'
-        }
-      });
-
-      return true;
     } catch (error) {
-      console.error('Error deleting estimate:', error);
+      // лог можно вынести на уровень роутера
       return false;
     }
   }
 
+  // === APPROVE ===
   async approveEstimate(estimateId: number, userId: string) {
     try {
-      // Read current state first to make this operation idempotent
-      const existing = await prisma.estimate.findUnique({
-        where: { id: estimateId },
-        include: {
-          order: {
-            include: {
-              client: {
-                select: { id: true, name: true, phone: true }
-              }
-            }
-          }
-        }
-      });
+      return await prisma.$transaction(async (tx) => {
+        const existing = await tx.estimate.findUnique({
+          where: { id: estimateId },
+          include: { order: true },
+        });
+        if (!existing) return null;
 
-      if (!existing) return null;
-
-      // If already approved - make sure order status is consistent and return existing without creating duplicate timeline/audit
-      if (existing.approved) {
-        try {
+        // уже одобрено — поддерживаем согласованность статуса заказа и выходим
+        if (existing.approved) {
           if (existing.order && existing.order.status !== 'APPROVED') {
-            await prisma.order.update({ where: { id: existing.orderId }, data: { status: 'APPROVED' } });
+            await tx.order.update({ where: { id: existing.orderId }, data: { status: 'APPROVED' } });
           }
-        } catch (e) {
-          console.warn('Failed to reconcile order status for already-approved estimate', e?.message || e);
+          return existing;
         }
 
-        return existing;
-      }
+        // запретим approve для отменённых/закрытых заказов
+        if (existing.order?.status && ['CANCELLED', 'CLOSED'].includes(existing.order.status)) {
+          throw httpError('INVALID_STATE', 409, 'Order state does not allow approval');
+        }
 
-      const estimate = await prisma.estimate.update({
-        where: { id: estimateId },
-        data: {
-          approved: true,
-          approvedAt: new Date()
-        },
-        include: {
-          order: {
-            include: {
-              client: {
-                select: { id: true, name: true, phone: true }
-              }
-            }
+        const estimate = await tx.estimate.update({
+          where: { id: estimateId },
+          data: { approved: true, approvedAt: new Date() },
+          include: {
+            order: { include: { client: { select: { id: true, name: true, phone: true } } } },
+          },
+        });
+
+        await tx.order.update({ where: { id: estimate.orderId }, data: { status: 'APPROVED' } });
+
+        await tx.orderTimeline.create({
+          data: {
+            orderId: estimate.orderId,
+            event: 'Estimate approved',
+            userId: String(userId),
+            details: { total: Number(estimate.total) },
+          },
+        });
+
+        // аудит (лучше иметь отдельную колонку estimateId + unique index)
+        try {
+          const exists: any = await tx.$queryRaw`
+            SELECT id FROM audit_events
+            WHERE type = 'estimate:approved' AND (payload->>'estimateId')::int = ${estimate.id} LIMIT 1
+          `;
+          const already = Array.isArray(exists) ? exists.length > 0 : !!exists;
+          if (!already) {
+            await tx.auditEvent.create({
+              data: {
+                type: 'estimate:approved',
+                payload: { estimateId: estimate.id, approvedBy: Number(userId) },
+                userId: Number(userId),
+              },
+            });
           }
-        }
+        } catch { /* non-fatal */ }
+
+        return estimate;
       });
-
-      // Обновляем статус заказа на APPROVED
-      await prisma.order.update({
-        where: { id: estimate.orderId },
-        data: { status: 'APPROVED' }
-      });
-
-      // Добавляем запись в timeline
-      await prisma.orderTimeline.create({
-        data: {
-          orderId: estimate.orderId,
-          event: 'Estimate approved',
-          userId: String(userId),
-          details: {
-            total: Number(estimate.total)
-          }
-        }
-      });
-
-      // Записываем в глобальный аудит для админки (idempotent: skip if an approval audit already exists for this estimate)
-      try {
-        // Use a small raw query to check JSON payload for existing estimateId
-        const existingAudit: any = await prisma.$queryRaw`
-          SELECT id FROM audit_events WHERE type = 'estimate:approved' AND (payload->>'estimateId')::int = ${estimate.id} LIMIT 1
-        `;
-
-        if (!existingAudit || (Array.isArray(existingAudit) && existingAudit.length === 0)) {
-          await prisma.auditEvent.create({
-            data: {
-              type: 'estimate:approved',
-              payload: { estimateId: estimate.id, approvedBy: Number(userId) },
-              userId: Number(userId)
-            }
-          });
-        } else {
-          // already recorded - skip creating duplicate
-          console.debug('Audit event for estimate approval already exists, skipping duplicate creation', { estimateId: estimate.id });
-        }
-      } catch (e) {
-        // non-fatal: log and continue
-        console.warn('Failed to write or check audit event for estimate approval', e?.message || e);
-      }
-
-      return estimate;
     } catch (err: any) {
-      if (err && err.code === 'P2025') return null;
-      console.error('Error approving estimate:', err);
+      if (err?.code === 'P2025') return null;
       throw err;
     }
   }
 
+  // === REJECT ===
   async rejectEstimate(estimateId: number, userId: string, reason?: string) {
     try {
-      const estimate = await prisma.estimate.update({
-        where: { id: estimateId },
-        data: {
-          approved: false
-        },
-        include: {
-          order: {
-            include: {
-              client: {
-                select: { id: true, name: true, phone: true }
-              }
-            }
+      return await prisma.$transaction(async (tx) => {
+        const existing = await tx.estimate.findUnique({
+          where: { id: estimateId },
+          include: { order: true },
+        });
+        if (!existing) return null;
+
+        // нельзя отклонять уже одобренную
+        if (existing.approved) throw httpError('ALREADY_APPROVED', 409);
+
+        const estimate = await tx.estimate.update({
+          where: { id: estimateId },
+          data: { approved: false, approvedAt: null },
+          include: {
+            order: { include: { client: { select: { id: true, name: true, phone: true } } } },
+          },
+        });
+
+        await tx.orderTimeline.create({
+          data: {
+            orderId: estimate.orderId,
+            event: 'Estimate rejected',
+            userId: String(userId),
+            details: { reason: reason || 'No reason provided' },
+          },
+        });
+
+        try {
+          const exists: any = await tx.$queryRaw`
+            SELECT id FROM audit_events
+            WHERE type = 'estimate:rejected' AND (payload->>'estimateId')::int = ${estimate.id} LIMIT 1
+          `;
+          const already = Array.isArray(exists) ? exists.length > 0 : !!exists;
+          if (!already) {
+            await tx.auditEvent.create({
+              data: {
+                type: 'estimate:rejected',
+                payload: { estimateId: estimate.id, rejectedBy: Number(userId), reason: reason || null },
+                userId: Number(userId),
+              },
+            });
           }
-        }
+        } catch { /* non-fatal */ }
+
+        return estimate;
       });
-
-      // Добавляем запись в timeline
-      await prisma.orderTimeline.create({
-        data: {
-          orderId: estimate.orderId,
-          event: 'Estimate rejected',
-          userId: String(userId),
-          details: {
-            reason: reason || 'No reason provided'
-          }
-        }
-      });
-
-      // Записываем в глобальный аудит для админки (avoid duplicate rejection events for same estimate)
-      try {
-        const existingAudit: any = await prisma.$queryRaw`
-          SELECT id FROM audit_events WHERE type = 'estimate:rejected' AND (payload->>'estimateId')::int = ${estimate.id} LIMIT 1
-        `;
-
-        if (!existingAudit || (Array.isArray(existingAudit) && existingAudit.length === 0)) {
-          await prisma.auditEvent.create({
-            data: {
-              type: 'estimate:rejected',
-              payload: { estimateId: estimate.id, rejectedBy: Number(userId), reason: reason || null },
-              userId: Number(userId)
-            }
-          });
-        } else {
-          console.debug('Audit event for estimate rejection already exists, skipping duplicate', { estimateId: estimate.id });
-        }
-      } catch (e) {
-        console.warn('Failed to write or check audit event for estimate rejection', e?.message || e);
-      }
-
-      return estimate;
     } catch (err: any) {
-      if (err && err.code === 'P2025') return null;
-      console.error('Error rejecting estimate:', err);
+      if (err?.code === 'P2025') return null;
       throw err;
     }
   }
 
+  // === STATS ===
   async getEstimateStatistics() {
-    // Estimate model does not have a `status` enum; we group by `approved` flag instead
     const stats = await prisma.estimate.groupBy({
       by: ['approved'],
-      _count: {
-        approved: true
-      },
-      _avg: {
-        total: true
-      }
+      _count: { approved: true },
+      _avg: { total: true },
     });
 
-    return stats.reduce((acc, stat) => {
-      acc[String(stat.approved)] = {
-        count: stat._count.approved,
-        avgCost: stat._avg.total ? Number(stat._avg.total) : null
+    return stats.reduce((acc, s) => {
+      acc[String(s.approved)] = {
+        count: s._count.approved,
+        avgCost: s._avg.total != null ? Number(s._avg.total) : null,
       };
       return acc;
     }, {} as Record<string, { count: number; avgCost: number | null }>);

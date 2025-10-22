@@ -1,55 +1,74 @@
-# Build stage
-FROM node:18-alpine AS builder
-
+# -------------------------------------------------------
+# Base: enable pnpm once to reuse in all stages
+# -------------------------------------------------------
+FROM node:18-bullseye-slim AS base
 WORKDIR /app
-
-# Copy package files
-COPY package*.json ./
-COPY tsconfig.json ./
-
-# Install pnpm and dependencies
-# Use pnpm to match the monorepo package manager (avoids npm ci lockfile issues)
+ENV CI=true
+# enable pnpm
 RUN corepack enable && corepack prepare pnpm@^9.0.0 --activate
-RUN pnpm install --frozen-lockfile=false
 
-# Copy source code
+# -------------------------------------------------------
+# Builder: install deps, build, prisma generate
+# -------------------------------------------------------
+FROM base AS builder
+
+# Install build tooling (for native deps if any)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+
+# Only copy files required to resolve deps first (better layer caching)
+COPY package.json pnpm-lock.yaml* tsconfig.json ./
+# if you have a workspace monorepo, also copy pnpm-workspace.yaml
+# COPY pnpm-workspace.yaml ./
+
+# Install all deps (dev + prod) for build
+RUN pnpm install --frozen-lockfile
+
+# Copy sources
 COPY src ./src
 COPY prisma ./prisma
 
 # Generate Prisma client
 RUN pnpm prisma generate
 
-# Build application
-RUN npm run build
+# Build
+RUN pnpm build
 
-# Production stage
-FROM node:18-alpine AS production
+# Prune dev deps to slim prod node_modules
+RUN pnpm prune --prod
 
-WORKDIR /app
+# -------------------------------------------------------
+# Runtime: small image with only runtime bits
+# -------------------------------------------------------
+FROM base AS runtime
 
 # Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+RUN apt-get update && apt-get install -y --no-install-recommends dumb-init \
+  && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S autoassist -u 1001
+RUN groupadd -g 1001 nodejs && useradd -u 1001 -g 1001 -m autoassist
 
-# Copy built application
+ENV NODE_ENV=production
+WORKDIR /app
+
+# Copy built app + prod node_modules + prisma schema
 COPY --from=builder --chown=autoassist:nodejs /app/dist ./dist
 COPY --from=builder --chown=autoassist:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=autoassist:nodejs /app/package.json ./package.json
 COPY --from=builder --chown=autoassist:nodejs /app/prisma ./prisma
 
-# Switch to non-root user
 USER autoassist
 
-# Expose port
 EXPOSE 3001
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+# Health check hits your /health endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3001/health', r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
-# Start application
+# Optional: run migrations on start (no-op if not using Prisma Migrate in prod)
+# set RUN_MIGRATIONS=true to enable
+ENV RUN_MIGRATIONS=false
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/app.js"]
+CMD ["/bin/sh", "-c", "if [ \"$RUN_MIGRATIONS\" = \"true\" ]; then npx prisma migrate deploy; fi; node dist/app.js"]

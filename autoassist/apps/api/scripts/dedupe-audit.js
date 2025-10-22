@@ -1,38 +1,56 @@
+#!/usr/bin/env node
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
+const args = process.argv.slice(2);
+const has = (k) => args.includes(k);
 
-async function dedupe() {
-  try {
-    // Find duplicates grouped by payload->>'estimateId' for estimate:approved
-    const raws = await prisma.$queryRaw`
-      SELECT (payload->>'estimateId')::int as estimateId, array_agg(id ORDER BY "createdAt" ASC) as ids
-      FROM audit_events
-      WHERE type = 'estimate:approved'
-      GROUP BY (payload->>'estimateId')::int
-      HAVING COUNT(*) > 1;
-    `;
+async function main() {
+  const dry = has('--dry-run');
 
-    if (!Array.isArray(raws) || raws.length === 0) {
-      console.log('No duplicate estimate approval audit events found.');
-      return;
-    }
+  console.log(`🧹 dedupe-audit: ${dry ? 'DRY RUN' : 'EXECUTE'}`);
 
-    for (const row of raws) {
-      const ids = row.ids;
-      // keep the first (earliest), delete the rest
-      const toDelete = ids.slice(1);
-      console.log(`Estimate ${row.estimateid} has duplicates, deleting ${toDelete.length} entries`);
-      await prisma.auditEvent.deleteMany({ where: { id: { in: toDelete } } });
-    }
+  // Pick oldest to delete; keep the newest / Видаляємо старі, лишаємо найновіші
+  const rows = await prisma.$queryRaw`
+    with x as (
+      select id, created_at, type,
+             coalesce(payload->>'estimateId', payload->>'orderId') as key
+      from audit_events
+      where coalesce(payload->>'estimateId', payload->>'orderId') is not null
+    ),
+    g as (
+      select type, key
+      from x
+      group by type, key
+      having count(*) > 1
+    )
+    select e.id
+    from audit_events e
+    join g on g.type = e.type
+         and g.key = coalesce(e.payload->>'estimateId', e.payload->>'orderId')
+    where e.id not in (
+      select id from (
+        select id,
+               row_number() over (
+                 partition by type, coalesce(payload->>'estimateId', payload->>'orderId')
+                 order by created_at desc
+               ) as rn
+        from audit_events
+      ) t where t.rn = 1
+    )
+  `;
 
-    console.log('Deduplication complete');
-  } catch (err) {
-    console.error('Failed to dedupe audit events', err);
-  } finally {
-    await prisma.$disconnect();
+  console.log('Found duplicates to delete:', rows.length);
+  if (!dry && rows.length) {
+    const ids = rows.map(r => r.id);
+    await prisma.$executeRaw`delete from audit_events where id = ANY(${ids})`;
+    console.log('✅ Deleted:', ids.length);
+  } else {
+    console.log('ℹ️ Nothing deleted.');
   }
 }
 
-// Run immediately when executed
-dedupe();
+main()
+  .catch((e) => { console.error('❌ dedupe-audit failed:', e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });
