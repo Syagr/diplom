@@ -4,11 +4,21 @@ import getSocket from './utils/socket'
 import OrderForm from './components/OrderForm'
 import OrderList from './components/OrderList'
 import OrderDetails from './pages/OrderDetails'
+import PaymentPage from './pages/Payments'
+import ReceiptsPage from './pages/Receipts'
+import ProofViewer from './pages/Proof'
+import DashboardPage from './pages/Dashboard'
 import Header from './components/Header'
 import UploadAttachment from './components/UploadAttachment'
 import ConnectWallet from './components/ConnectWallet'
 import AdminPage from './pages/Admin'
+import ProfilePage from './pages/Profile'
+import OrdersBoard from './pages/admin/OrdersBoard'
+import CalcProfilesAdmin from './pages/admin/CalcProfiles'
+import ServiceCentersAdmin from './pages/admin/ServiceCenters'
+import BroadcastAdmin from './pages/admin/Broadcast'
 import MapPage from './pages/Map'
+import NotificationsPage from './pages/Notifications'
 import auth from './utils/auth'
 import axios from 'axios'
 
@@ -25,6 +35,7 @@ function DemoUploader() {
   }
   return <UploadAttachment token={token} orderId={1} />
 }
+  import ToastCenter from './shared/ToastCenter'
 
 function ProtectedRoute({ children }: { children: JSX.Element }) {
   // simple token presence check — tokens are stored in localStorage by the auth flow
@@ -78,7 +89,7 @@ function AuthEntry({ initialMode }: { initialMode?: 'login' | 'register' }) {
         }
 
         // Error path: prefer structured { error: { code, message } }
-        const serverMsg = j?.error?.message || j?.message || text || r.statusText
+  const serverMsg = j?.error?.message || j?.message || text || r.statusText
         // If validation details present, map them
         if (j?.details && Array.isArray(j.details)) {
           const byField: Record<string,string> = {}
@@ -180,6 +191,7 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Header isConnected={isConnected} />
+      <ToastCenter />
       
       <main className="container mx-auto px-4 py-8">
         <Routes>
@@ -201,10 +213,20 @@ function App() {
           } />
 
           {/* Protected application routes */}
-          <Route path="/" element={<ProtectedRoute><OrderForm /></ProtectedRoute>} />
+          <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/orders/new" element={<ProtectedRoute><OrderForm /></ProtectedRoute>} />
           <Route path="/orders" element={<ProtectedRoute><OrderList /></ProtectedRoute>} />
           <Route path="/orders/:id" element={<ProtectedRoute><OrderDetails /></ProtectedRoute>} />
+          <Route path="/orders/:id/proof" element={<ProtectedRoute><ProofViewer /></ProtectedRoute>} />
+          <Route path="/payments/:orderId" element={<ProtectedRoute><PaymentPage /></ProtectedRoute>} />
+          <Route path="/receipts" element={<ProtectedRoute><ReceiptsPage /></ProtectedRoute>} />
+          <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute><AdminPage /></ProtectedRoute>} />
+          <Route path="/admin/board" element={<ProtectedRoute><OrdersBoard /></ProtectedRoute>} />
+          <Route path="/admin/calc-profiles" element={<ProtectedRoute><CalcProfilesAdmin /></ProtectedRoute>} />
+          <Route path="/admin/service-centers" element={<ProtectedRoute><ServiceCentersAdmin /></ProtectedRoute>} />
+          <Route path="/admin/broadcast" element={<ProtectedRoute><BroadcastAdmin /></ProtectedRoute>} />
           <Route path="/map" element={<ProtectedRoute><MapPage /></ProtectedRoute>} />
         </Routes>
       </main>

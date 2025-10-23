@@ -7,7 +7,6 @@ async function backendHealthy(timeout = 1000): Promise<boolean> {
   // Deduplicate concurrent health checks to avoid multiple simultaneous requests
   // Use a short-lived in-flight promise cache
   const now = Date.now()
-  // @ts-expect-error -- module-level cache
   if ((backendHealthy as any)._cache && (backendHealthy as any)._cache.exp > now) {
     return (backendHealthy as any)._cache.p
   }

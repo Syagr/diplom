@@ -24,8 +24,7 @@ services:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
-    ports:
-      - "5433:5432"
+    # No host port mapping (accessible within docker network only)
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # If you need custom init SQL, provide ./init.sql
@@ -129,8 +128,8 @@ services:
 
   api:
     build:
-      context: ../../
-      dockerfile: apps/api/Dockerfile
+      context: ../../apps/api
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       # App
@@ -173,6 +172,27 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    networks:
+      - autoassist-network
+
+  prisma-migrate:
+    image: node:18-bullseye
+    working_dir: /work/apps/api
+    volumes:
+      - ../../:/work
+    environment:
+      DATABASE_URL: postgresql://test:test@db:5432/autoassist?schema=public
+      CI: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh","-lc"]
+    command: |
+      corepack enable && corepack prepare pnpm@10.19.0 --activate && \
+      pnpm -w install --no-frozen-lockfile && \
+      pnpm --filter @autoassist/api prisma migrate dev --name autoassist && \
+      pnpm --filter @autoassist/api prisma generate && \
+      pnpm --filter @autoassist/api tsx prisma/seed.ts || true
     networks:
       - autoassist-network
 

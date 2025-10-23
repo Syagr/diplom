@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+.pnpm-store
+**/.pnpm-store
+.git
+.gitignore
+**/.DS_Store
+**/dist
+**/coverage
+**/*.log
+**/.vscode
+**/.idea
+**/.env
+**/.env.*
+**/tmp

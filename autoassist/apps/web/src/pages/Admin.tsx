@@ -115,6 +115,12 @@ export default function AdminPage() {
   return (
     <div style={{ maxWidth: 1100, margin: '40px auto' }}>
       <h1 className="text-2xl font-bold mb-4">Адмін — Журнал активності</h1>
+      <div className="mb-4 text-sm">
+        <a href="/admin/board" className="mr-3 text-primary-700">Борда</a>
+        <a href="/admin/calc-profiles" className="mr-3 text-primary-700">Кальк‑профілі</a>
+        <a href="/admin/service-centers" className="mr-3 text-primary-700">Сервіс‑центри</a>
+        <a href="/admin/broadcast" className="text-primary-700">Broadcast</a>
+      </div>
       <p className="mb-4 text-sm text-gray-600">Тут відображаються останні події платформи для адміністраторів (замовлення, вкладення, сповіщення).</p>
 
       <div className="border rounded p-3 bg-white shadow-sm">
