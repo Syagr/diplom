@@ -50,24 +50,38 @@ function assertSecret(name: 'JWT_SECRET' | 'JWT_REFRESH_SECRET', value: string) 
 /** ---- Signers ---- */
 export function signAccessToken(payload: BasePayload, opts: SignOpts = {}) {
   assertSecret('JWT_SECRET', ACCESS_SECRET);
-  return jwt.sign(payload, ACCESS_SECRET, {
+  const signOpts: jwt.SignOptions = {
     algorithm: alg,
     expiresIn: ACCESS_EXPIRES_IN as any,
-    audience: opts.aud,
-    issuer: opts.iss,
-    header: opts.header,
-  } as jwt.SignOptions);
+  };
+  if (typeof opts.iss !== 'undefined') {
+    signOpts.issuer = opts.iss;
+  }
+  if (typeof opts.aud !== 'undefined') {
+    signOpts.audience = opts.aud as any;
+  }
+  if (typeof opts.header !== 'undefined') {
+    signOpts.header = opts.header;
+  }
+  return jwt.sign(payload, ACCESS_SECRET, signOpts);
 }
 
 export function signRefreshToken(payload: BasePayload, opts: SignOpts = {}) {
   assertSecret('JWT_REFRESH_SECRET', REFRESH_SECRET);
-  return jwt.sign(payload, REFRESH_SECRET, {
+  const signOpts: jwt.SignOptions = {
     algorithm: alg,
     expiresIn: REFRESH_EXPIRES_IN as any,
-    audience: opts.aud,
-    issuer: opts.iss,
-    header: opts.header,
-  } as jwt.SignOptions);
+  };
+  if (typeof opts.iss !== 'undefined') {
+    signOpts.issuer = opts.iss;
+  }
+  if (typeof opts.aud !== 'undefined') {
+    signOpts.audience = opts.aud as any;
+  }
+  if (typeof opts.header !== 'undefined') {
+    signOpts.header = opts.header;
+  }
+  return jwt.sign(payload, REFRESH_SECRET, signOpts);
 }
 
 /** ---- Verifiers ---- */

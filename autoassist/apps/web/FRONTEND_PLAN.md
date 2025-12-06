@@ -297,3 +297,45 @@ src/
 ---
 
 This document is the implementation contract. The following folders and screen stubs are created to accelerate execution. Fill the stubs with real UI progressively while wiring endpoints and sockets.
+
+## Acceptance criteria (by screen)
+
+- Login/Web3
+  - Happy path: MetaMask connected on Polygon Amoy (80002), nonce fetched, signature verified, tokens set, redirect to Dashboard.
+  - Edge: Wrong chain shows switch banner; invalid signature shows inline error and allows retry.
+- Customer Dashboard
+  - Happy path: Orders load with status badges; unread notifications count visible; “New order” nav works.
+  - Edge: Empty state renders helpful CTA when no orders.
+- New Order Wizard
+  - Happy path: Required fields validated; up to 10 images upload with previews; map selects pickup; POST /api/orders returns id and redirects to Details.
+  - Edge: Large image file (>10MB) rejected with message; missing coords blocks continue.
+- Orders List
+  - Happy path: Filters by status update server request; pagination works; sockets update list when order is created/updated.
+  - Edge: Network error shows retry button without crashing.
+- Order Details (customer)
+  - Happy path: Timeline visible; attachments preview; Pay button appears when estimate available; cancel disabled when not allowed; receipt/proof links visible when ready.
+  - Edge: Unauthorized access redirects to login.
+- Payments (Estimate/Web3)
+  - Happy path: Estimate renders totals; submitting txHash triggers verify; on success shows receipt link and toast; status updates via socket.
+  - Edge: RPC timeout shows retry; wrong chain blocked with banner.
+- Notifications (Inbox + Toasts)
+  - Happy path: List paginates; mark-as-read toggles state and unread counter; preferences persist across reloads; realtime toast maps priority to style.
+  - Edge: When WS disconnected, falls back to polling without errors.
+- Proof Viewer
+  - Happy path: Loads proofHash/evidence for owned order; copy hash works.
+  - Edge: Non-owner gets 403 and redirect with message.
+- Receipts
+  - Happy path: List shows past payments; clicking opens presigned URL for PDF.
+  - Edge: Expired URL refetches new URL.
+- Admin Board
+  - Happy path: Filters/search work; status updates reflect via sockets; clicking row opens details.
+  - Edge: No results shows empty state.
+- Admin Calc Profiles
+  - Happy path: Create/Update/Delete with validation; preview shows computed change.
+  - Edge: Duplicate name blocked with server error surfaced.
+- Admin Service Centers
+  - Happy path: Create/Update/Delete; map picker sets coords; list refreshes live.
+  - Edge: Invalid lat/lng validation message shown.
+- Admin Broadcast
+  - Happy path: Fill form and POST /api/notifications/broadcast returns delivered count; success toast.
+  - Edge: Missing fields show validation errors; 401/403 handled by redirect to login.

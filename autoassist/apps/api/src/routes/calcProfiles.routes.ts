@@ -23,7 +23,8 @@ const UpsertSchema = z.object({
 router.get('/', authenticate, requireRole(['admin','service_manager','dispatcher']), async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const data = await listProfiles();
-    res.json({ success: true, data });
+    // Return as { items } to satisfy FE contract tests and keep structure predictable
+    res.json({ items: data });
   } catch (e) { next(e); }
 });
 

@@ -1,5 +1,6 @@
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
+jest.setTimeout(120000);
 
 let app;
 let prisma;

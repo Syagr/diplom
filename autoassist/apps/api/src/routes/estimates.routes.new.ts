@@ -22,7 +22,9 @@ router.post('/auto', authenticate, async (req: Request, res: Response, next: Nex
   const est = await autoCalculateEstimate(params);
     const io = req.app.get('io');
     io?.to(`order:${body.orderId}`).emit('estimate:updated', { orderId: body.orderId, estimateId: est.id, total: est.total });
-    return res.status(201).json({ estimate: est });
+    // Ensure numeric total for test stability (Prisma Decimal may serialize as string)
+    const estimate = { ...est, total: Number((est as any).total) } as any;
+    return res.status(201).json({ estimate });
   } catch (e) {
     return next(e);
   }
@@ -34,7 +36,8 @@ router.post('/:orderId/lock', authenticate, async (req: Request, res: Response, 
     const est = await lockEstimate(orderId);
     const io = req.app.get('io');
     io?.to(`order:${orderId}`).emit('estimate:locked', { orderId, estimateId: est.id });
-    return res.json({ estimate: est });
+    const estimate = { ...est, total: Number((est as any).total) } as any;
+    return res.json({ estimate });
   } catch (e) {
     return next(e);
   }

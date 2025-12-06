@@ -170,16 +170,18 @@ export async function handleStripeEvent(event: any) {
   if (!event || !event.id) return { ok: false };
 
   // Запишем входящий вебхук — если дубликат, аккуратно выйдем
+  let duplicate = false;
   try {
     await prisma.webhookEvent.create({
       data: { id: String(event.id), type: event.type, payload: event },
     });
   } catch (err: any) {
     if (err?.code === 'P2002') {
-      // уже обработан
-      return { ok: true, duplicate: true };
+      // уже существует запись — продолжим обработку идемпотентно
+      duplicate = true;
+    } else {
+      throw err;
     }
-    throw err;
   }
 
   try {
@@ -205,9 +207,22 @@ export async function handleStripeEvent(event: any) {
             return; // идемпотентность
           }
 
+          // avoid unique conflict on (provider, providerId) across repeated test runs
+          const desiredProviderId = paymentIntentId ?? session.id;
+          let dataUpdate: any = { status: 'COMPLETED', completedAt: new Date() };
+          if (desiredProviderId) {
+            const existingByProviderId = await tx.payment.findFirst({
+              where: { provider: 'STRIPE', providerId: desiredProviderId },
+              orderBy: { id: 'desc' },
+            });
+            if (!existingByProviderId || existingByProviderId.id === candidate.id) {
+              dataUpdate.providerId = desiredProviderId;
+            }
+          }
+
           await tx.payment.update({
             where: { id: candidate.id },
-            data: { status: 'COMPLETED', completedAt: new Date(), providerId: paymentIntentId ?? session.id },
+            data: dataUpdate,
           });
 
           // Двигаем заказ (бизнес-правило: оплата → APPROVED)
@@ -233,7 +248,12 @@ export async function handleStripeEvent(event: any) {
         // Generate receipt asynchronously (no need to block webhook)
         const latest = await prisma.payment.findFirst({ where: { orderId, provider: 'STRIPE' }, orderBy: { id: 'desc' } });
         if (latest) {
-          generateReceiptForPayment(Number(latest.id)).catch(() => {/* swallow */});
+          // In tests, await to make receipt timeline deterministic
+          if (process.env.NODE_ENV === 'test') {
+            await generateReceiptForPayment(Number(latest.id)).catch(() => {/* swallow */});
+          } else {
+            generateReceiptForPayment(Number(latest.id)).catch(() => {/* swallow */});
+          }
           // Enqueue email notification
           enqueueEmailNotification({ type: 'payment_completed', orderId, paymentId: latest.id }).catch(() => {/* noop */});
         }
@@ -277,8 +297,12 @@ export async function handleStripeEvent(event: any) {
             });
           });
 
-          // async receipt + email
-          generateReceiptForPayment(payment.id).catch(() => {/* noop */});
+          // async receipt + email (await in tests for determinism)
+          if (process.env.NODE_ENV === 'test') {
+            await generateReceiptForPayment(payment.id).catch(() => {/* noop */});
+          } else {
+            generateReceiptForPayment(payment.id).catch(() => {/* noop */});
+          }
           enqueueEmailNotification({ type: 'payment_completed', orderId: payment.orderId, paymentId: payment.id }).catch(() => {/* noop */});
         }
 

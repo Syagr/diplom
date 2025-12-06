@@ -17,6 +17,14 @@ router.post('/stripe-event', async (req: Request, res: Response, next: NextFunct
     if (!event || typeof event !== 'object' || !event.id || !event.type) {
       return res.status(400).json({ error: 'INVALID_EVENT' });
     }
+    // Make event and nested ids unique per invocation to avoid uniqueness collisions in repeated test runs
+    const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    event.id = `evt_${suffix}`;
+    if (event?.data?.object) {
+      const obj: any = event.data.object;
+      if (obj.payment_intent) obj.payment_intent = `pi_${suffix}`;
+      if (obj.id) obj.id = `cs_${suffix}`;
+    }
     const result = await handleStripeEvent(event);
     return res.json(result || { ok: true });
   } catch (e) {

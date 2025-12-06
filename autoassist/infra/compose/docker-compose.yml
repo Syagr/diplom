@@ -1,4 +1,4 @@
-version: "3.9"
+name: compose
 
 networks:
   autoassist-network:
@@ -9,11 +9,11 @@ networks:
         - subnet: 172.20.0.0/16
 
 volumes:
-  postgres_data:
-  redis_data:
-  minio_data:
-  prometheus_data:
-  loki_data:
+  postgres_data: {}
+  redis_data: {}
+  minio_data: {}
+  prometheus_data: {}
+  loki_data: {}
 
 services:
   db:
@@ -24,11 +24,8 @@ services:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
-    # No host port mapping (accessible within docker network only)
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # If you need custom init SQL, provide ./init.sql
-      # - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test -d autoassist"]
       interval: 10s
@@ -41,8 +38,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes
-    # Если нужен пароль, верни: --requirepass autoassist123
+    command: ["redis-server","--appendonly","yes"]
     ports:
       - "6379:6379"
     volumes:
@@ -58,13 +54,13 @@ services:
   minio:
     image: minio/minio:latest
     restart: unless-stopped
-    command: server /data --console-address ":12001"
+    command: ["server","/data","--console-address",":12001"]
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin123
     ports:
-      - "12002:9000"   # S3 API
-      - "12003:12001"  # Web Console
+      - "12002:9000"
+      - "12003:12001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -85,15 +81,14 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin123
-    entrypoint: >
-      /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin123 &&
-      /usr/bin/mc mb -p myminio/attachments ||
-      true &&
-      /usr/bin/mc anonymous set download myminio/attachments ||
-      true &&
-      exit 0
-      "
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin123 && \
+        /usr/bin/mc mb -p myminio/attachments || true && \
+        /usr/bin/mc anonymous set download myminio/attachments || true && \
+        exit 0
     networks:
       - autoassist-network
 
@@ -108,7 +103,7 @@ services:
       - "--storage.tsdb.retention.time=200h"
       - "--web.enable-lifecycle"
     ports:
-      - "19091:9090"   # UI на http://localhost:19091
+      - "19091:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -118,7 +113,7 @@ services:
   loki:
     image: grafana/loki:latest
     restart: unless-stopped
-    command: -config.file=/etc/loki/local-config.yaml
+    command: ["-config.file=/etc/loki/local-config.yaml"]
     ports:
       - "3100:3100"
     volumes:
@@ -127,29 +122,24 @@ services:
       - autoassist-network
 
   api:
-    build:
-      context: ../../apps/api
-      dockerfile: Dockerfile
+    image: node:18-bullseye
+    working_dir: /work/apps/api
+    volumes:
+      - ../../:/work
     restart: unless-stopped
     environment:
-      # App
       NODE_ENV: production
       PORT: 8080
       JWT_SECRET: change_me_super_secret_key
       JWT_REFRESH_SECRET: change_me_super_refresh_secret
-      # Database (inside network)
       DATABASE_URL: postgresql://test:test@db:5432/autoassist?schema=public
-      # Redis
       REDIS_URL: redis://redis:6379
-      # MinIO
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin123
       MINIO_BUCKET: attachments
-      # CORS / Public URLs
-      CORS_ORIGIN: http://localhost:5173,http://localhost
-      # Web3 (optional; can be set in .env)
+      CORS_ORIGIN: http://localhost:5173,http://localhost:5174,http://localhost
       WEB3_PROVIDER_URL: ${WEB3_PROVIDER_URL:-}
       USDC_TOKEN_ADDRESS: ${USDC_TOKEN_ADDRESS:-}
       PLATFORM_RECEIVE_ADDRESS: ${PLATFORM_RECEIVE_ADDRESS:-}
@@ -166,6 +156,7 @@ services:
         condition: service_started
       minio:
         condition: service_healthy
+    entrypoint: ["bash","/work/scripts/start-api.sh"]
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
       interval: 15s
@@ -186,25 +177,42 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    entrypoint: ["/bin/sh","-lc"]
-    command: |
-      corepack enable && corepack prepare pnpm@10.19.0 --activate && \
-      pnpm -w install --no-frozen-lockfile && \
-      pnpm --filter @autoassist/api prisma migrate dev --name autoassist && \
-      pnpm --filter @autoassist/api prisma generate && \
-      pnpm --filter @autoassist/api tsx prisma/seed.ts || true
+    entrypoint: ["bash","/work/scripts/db-push-seed.sh"]
     networks:
       - autoassist-network
 
   web:
     build:
-      context: ../../
-      dockerfile: apps/web/Dockerfile
+      context: ../../apps/web
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "5173:80"   # serve SPA on http://localhost:5173
+      - "5174:80"
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - autoassist-network
+
+  api-tests:
+    image: node:18-bullseye
+    working_dir: /work/apps/api
+    volumes:
+      - ../../:/work
+    environment:
+      DATABASE_URL: postgresql://test:test@db:5432/autoassist?schema=public
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: attachments
+      NODE_ENV: test
+      DISABLE_QUEUES: "1"
+      DISABLE_RECEIPT_UPLOAD: "1"
+    depends_on:
+      prisma-migrate:
+        condition: service_started
+    entrypoint: ["bash","-lc","/work/scripts/run-api-tests.sh"]
     networks:
       - autoassist-network

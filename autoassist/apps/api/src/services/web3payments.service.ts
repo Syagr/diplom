@@ -180,8 +180,12 @@ export async function verifyAndCompleteWeb3Payment({ orderId, paymentId, txHash 
     return p;
   });
 
-  // fire-and-forget receipt generation + email notify
-  generateReceiptForPayment(updated.id).catch(() => {/* noop */});
+  // receipt generation + email notify (await in tests for determinism)
+  if (process.env.NODE_ENV === 'test') {
+    await generateReceiptForPayment(updated.id).catch(() => {/* noop */});
+  } else {
+    generateReceiptForPayment(updated.id).catch(() => {/* noop */});
+  }
   enqueueEmailNotification({ type: 'payment_completed', orderId: updated.orderId, paymentId: updated.id }).catch(() => {/* noop */});
   return updated;
 }
@@ -227,7 +231,11 @@ export async function verifyAndCompleteWeb3PaymentFromReceipt({ orderId, payment
     });
     return p;
   });
-  generateReceiptForPayment(updated.id).catch(() => {/* noop */});
+  if (process.env.NODE_ENV === 'test') {
+    await generateReceiptForPayment(updated.id).catch(() => {/* noop */});
+  } else {
+    generateReceiptForPayment(updated.id).catch(() => {/* noop */});
+  }
   enqueueEmailNotification({ type: 'payment_completed', orderId: updated.orderId, paymentId: updated.id }).catch(() => {/* noop */});
   return updated;
 }

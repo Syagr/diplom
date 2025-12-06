@@ -1,5 +1,6 @@
 // src/queues/index.ts
 import IORedis from 'ioredis';
+import { createRequire } from 'node:module';
 
 // Allow disabling queues in test/smoke environments to avoid ESM/CJS loader issues
 const DISABLE_QUEUES = process.env.DISABLE_QUEUES === '1' || process.env.NODE_ENV === 'test';
@@ -7,11 +8,12 @@ const DISABLE_QUEUES = process.env.DISABLE_QUEUES === '1' || process.env.NODE_EN
 let Queue: any;
 let QueueEvents: any;
 if (!DISABLE_QUEUES) {
-  // Importing BullMQ in NodeNext can be tricky for types; use dynamic import compatible with ESM
+  // In ESM context, use createRequire to load CommonJS modules like bullmq
+  const require = createRequire(import.meta.url);
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const Bull = require('bullmq');
-  Queue = Bull.Queue as any;
-  QueueEvents = Bull.QueueEvents as any;
+  Queue = (Bull as any).Queue as any;
+  QueueEvents = (Bull as any).QueueEvents as any;
 }
 type JobsOptions = any;
 type QueueOptions = any;
