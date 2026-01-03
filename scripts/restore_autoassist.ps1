@@ -44,9 +44,9 @@ if ($RestoreVolumes) {
     Write-Output "Restoring docker volumes from archive files..."
     $tarFiles = Get-ChildItem -Path $BackupDir -Filter '*_*.tar.gz' -File
     foreach ($f in $tarFiles) {
-        # derive volume name from filename (strip timestamp suffix)
-        $base = $f.BaseName -replace '_\d{8}_\d{6}$',''
-        $volName = $base
+        # derive volume name from filename (strip .tar.gz and timestamp suffix)
+        $base = $f.Name -replace '\.tar\.gz$',''
+        $volName = $base -replace '_\d{8}_\d{6}$',''
         Write-Output "About to restore $($f.Name) into volume '$volName'"
         if (-not (docker volume ls --format '{{.Name}}' | Select-String -Pattern "^$volName$")) {
             Write-Output "Volume '$volName' does not exist. Creating..."
@@ -93,7 +93,7 @@ if ($PgLogicalRestore) {
             $plainPass = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
 
             # copy dump into container
-            docker cp "$($dump.FullName)" "$pgContainer:/tmp/restore.dump"
+            docker cp "$($dump.FullName)" "${pgContainer}:/tmp/restore.dump"
             Write-Output "Running pg_restore inside container (will restore into $dbName)"
             docker exec -e PGPASSWORD=$plainPass $pgContainer pg_restore -U $dbUser -d $dbName -v /tmp/restore.dump
             # clear password from memory variables

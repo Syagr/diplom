@@ -140,6 +140,7 @@ services:
       MINIO_SECRET_KEY: minioadmin123
       MINIO_BUCKET: attachments
       CORS_ORIGIN: http://localhost:5173,http://localhost:5174,http://localhost
+      STRIPE_SECRET_KEY: sk_test_dummy
       WEB3_PROVIDER_URL: ${WEB3_PROVIDER_URL:-}
       USDC_TOKEN_ADDRESS: ${USDC_TOKEN_ADDRESS:-}
       PLATFORM_RECEIVE_ADDRESS: ${PLATFORM_RECEIVE_ADDRESS:-}
@@ -156,7 +157,7 @@ services:
         condition: service_started
       minio:
         condition: service_healthy
-    entrypoint: ["bash","/work/scripts/start-api.sh"]
+    entrypoint: ["/bin/sh","/work/scripts/start-api.sh"]
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
       interval: 15s
@@ -177,7 +178,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    entrypoint: ["bash","/work/scripts/db-push-seed.sh"]
+    entrypoint: ["/bin/sh","/work/scripts/db-push-seed.sh"]
     networks:
       - autoassist-network
 
@@ -213,6 +214,6 @@ services:
     depends_on:
       prisma-migrate:
         condition: service_started
-    entrypoint: ["bash","-lc","/work/scripts/run-api-tests.sh"]
+    entrypoint: ["/bin/sh","/work/scripts/run-api-tests.sh"]
     networks:
       - autoassist-network
