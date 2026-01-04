@@ -26,15 +26,14 @@ function normalizeAddr(address: string): string {
 async function upsertNonce(address: string) {
   const a = normalizeAddr(address);
   const nonce = makeNonce();
-  const expiresAt = new Date((nowUnix() + NONCE_TTL_SEC) * 1000);
 
   await prisma.walletNonce.upsert({
     where: { address: a },
-    update: { nonce, expiresAt },
-    create: { address: a, nonce, expiresAt },
+    update: { nonce, createdAt: new Date() },
+    create: { address: a, nonce },
   });
 
-  return { nonce, expiresAt };
+  return { nonce };
 }
 
 async function fetchNonceRecord(address: string) {
@@ -43,22 +42,33 @@ async function fetchNonceRecord(address: string) {
   if (!rec) {
     throw Object.assign(new Error('NONCE_NOT_FOUND'), { status: 400 });
   }
-  if (rec.expiresAt && rec.expiresAt.getTime() < Date.now()) {
-    // Сразу удалим, чтобы не копился мусор
+  if (rec.createdAt && (Date.now() - rec.createdAt.getTime()) > NONCE_TTL_SEC * 1000) {
     await prisma.walletNonce.delete({ where: { address: a } }).catch(() => {});
-    throw Object.assign(new Error('NONCE_EXPIRED'), { status: 400 });
+    throw Object.assign(new Error("NONCE_EXPIRED"), { status: 400 });
   }
   return rec;
 }
 
 function verifySignature(expectedAddress: string, message: string, signature: string) {
-  let signer: string;
+  const expected = normalizeAddr(expectedAddress);
+  let signer: string | null = null;
   try {
     signer = ethers.verifyMessage(message, signature);
   } catch {
-    throw Object.assign(new Error('INVALID_SIGNATURE'), { status: 400 });
+    signer = null;
   }
-  if (normalizeAddr(signer) !== normalizeAddr(expectedAddress)) {
+
+  if (!signer || normalizeAddr(signer) !== expected) {
+    try {
+      // Some wallets use eth_sign style (no prefix). Recover from raw message hash.
+      const msgHash = ethers.keccak256(ethers.toUtf8Bytes(message));
+      signer = ethers.recoverAddress(msgHash, signature);
+    } catch {
+      signer = null;
+    }
+  }
+
+  if (!signer || normalizeAddr(signer) !== expected) {
     throw Object.assign(new Error('INVALID_SIGNATURE'), { status: 400 });
   }
 }
@@ -77,18 +87,27 @@ async function issueTokensForUser(user: { id: number; role: string; tokenVersion
 
 // 1) Запросить одноразовый nonce для адреса
 export async function getNonceForAddress(address: string) {
-  const { nonce, expiresAt } = await upsertNonce(address);
-  return { nonce, expiresAt };
+  const { nonce } = await upsertNonce(address);
+  return { nonce };
 }
 
 // 2) Авторизация кошельком: проверяем подпись, создаём пользователя при необходимости, выдаём токены.
 //    Возвращаем и access, и refresh, а nonce уничтожаем (one-shot).
-export async function verifyWalletSignature(address: string, signature: string, name?: string) {
-  const a = normalizeAddr(address);
+export async function verifyWalletSignature(address: string, signature: string, name?: string): Promise<{ access: string; refresh: string }>;
+export async function verifyWalletSignature(params: { address: string; signature: string; name?: string }): Promise<{ access: string; refresh: string }>;
+export async function verifyWalletSignature(
+  addressOrParams: string | { address: string; signature: string; name?: string },
+  signature?: string,
+  name?: string
+) {
+  const input = typeof addressOrParams === 'string'
+    ? { address: addressOrParams, signature: signature || '', name }
+    : addressOrParams;
+  const a = normalizeAddr(input.address);
   const rec = await fetchNonceRecord(a);
 
   const msg = `${LOGIN_MSG_PREFIX} ${rec.nonce}`;
-  verifySignature(a, msg, signature);
+  verifySignature(a, msg, input.signature);
 
   // Одноразовость: удаляем nonce даже при дальнейших ошибках (best-effort)
   await prisma.walletNonce.delete({ where: { address: a } }).catch(() => {});
@@ -104,7 +123,7 @@ export async function verifyWalletSignature(address: string, signature: string, 
     user = await prisma.user.create({
       data: {
         walletAddress: a,
-        name: name || null,
+        name: input.name || null,
         // фиктивный пароль, чтобы поле было заполнено (если в схеме NOT NULL)
         passwordHash: crypto.randomBytes(16).toString('hex'),
         role: 'customer',
@@ -157,3 +176,4 @@ export async function linkWalletToUser(address: string, signature: string, userI
 
   return { ok: true };
 }
+

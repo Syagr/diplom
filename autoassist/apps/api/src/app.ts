@@ -22,12 +22,17 @@ import insuranceRoutes from './routes/insurance.routes.new.js';
 import paymentsRoutes, { stripeWebhookHandler } from './routes/payments.routes.js';
 import towRoutes from './routes/tow.routes.new.js';
 import ordersRoutesNew from './routes/orders.routes.new.js';
+import ordersRoutes from './routes/orders.routes.js';
 import serviceCentersRoutes from './routes/serviceCenters.routes.js';
 import estimatesRoutesNew from './routes/estimates.routes.new.js';
+import authRoutes from './routes/auth.routes.js';
 import authWalletRoutes from './routes/auth.wallet.routes.js';
+import walletRoutes from './routes/wallet.routes.js';
 import calcProfilesRoutes from './routes/calcProfiles.routes.js';
 import testRoutes from './routes/test.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
+import receiptsRoutes from './routes/receipts.routes.js';
+import meRoutes from './routes/me.routes.js';
 // Removed: authRoutes, ordersRoutes, notificationsRoutes, walletRoutes, estimatesRoutes, adminRoutes
 import { authenticate } from './middleware/auth.middleware.js';
 
@@ -213,8 +218,8 @@ app.use((req, res, next) => {
 
 // ---------- API routes ----------
 
-// app.use('/api/auth', authRoutes);
-// app.use('/api/orders', authenticate, ordersRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/orders', ordersRoutes);
 app.use('/api/attachments', authenticate, attachmentsRoutes);
 app.use('/api/insurance', authenticate, insuranceRoutes);
 app.use('/api/payments', authenticate, paymentsRoutes);
@@ -223,7 +228,10 @@ app.use('/api/orders', authenticate, ordersRoutesNew);
 app.use('/api/service-centers', serviceCentersRoutes);
 app.use('/api/estimates', estimatesRoutesNew);
 app.use('/api/auth', authWalletRoutes);
+app.use('/api/wallet', walletRoutes);
 app.use('/api/calc-profiles', calcProfilesRoutes);
+app.use('/api/receipts', receiptsRoutes);
+app.use('/api/me', meRoutes);
 // Prometheus metrics endpoint (no auth). Consider protecting in production via network.
 app.get('/metrics', async (_req, res) => {
   try {

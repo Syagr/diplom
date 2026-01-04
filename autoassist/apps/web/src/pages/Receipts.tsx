@@ -10,56 +10,75 @@ type Receipt = {
   url?: string | null
 }
 
+function normalizeError(e: any, fallback: string) {
+  const msg = e?.response?.data?.error?.message || e?.response?.data?.message || e?.message || fallback
+  if (/not[_ ]?found/i.test(String(msg))) return 'Receipts are not available yet.'
+  return String(msg)
+}
+
 export default function ReceiptsPage() {
   const [receipts, setReceipts] = useState<Receipt[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   async function load() {
-    setLoading(true); setError(null)
+    setLoading(true)
+    setError(null)
     try {
       const r = await axios.get('/api/receipts')
       setReceipts(r.data || [])
-    } catch (e:any) {
-      setError(e?.response?.data?.error || 'Не вдалося завантажити чеки')
+    } catch (e: any) {
+      setError(normalizeError(e, 'Failed to load receipts'))
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
 
-  async function getUrl(id:number) {
+  async function getUrl(id: number) {
     try {
       const r = await axios.post(`/api/receipts/${id}/url`)
       const url = r.data?.url
       if (url) {
-  setReceipts((prev: Receipt[]) => prev.map((rc: Receipt) => rc.id === id ? { ...rc, url } : rc))
-        try { window.open(url, '_blank') } catch {}
+        setReceipts((prev: Receipt[]) => prev.map((rc: Receipt) => (rc.id === id ? { ...rc, url } : rc)))
+        try {
+          window.open(url, '_blank')
+        } catch {}
       }
-    } catch (e:any) {
-      setError(e?.response?.data?.error || 'Помилка отримання посилання на чек')
+    } catch (e: any) {
+      setError(normalizeError(e, 'Failed to open receipt'))
     }
   }
 
   return (
     <div className="max-w-4xl mx-auto bg-white p-6 rounded shadow">
-      <h2 className="text-2xl font-bold mb-4">Квитанції</h2>
-      {loading && <div>Завантаження…</div>}
+      <h2 className="text-2xl font-bold mb-4">Receipts</h2>
+      {loading && <div>Loading...</div>}
       {error && <div className="text-red-700 text-sm mb-2">{error}</div>}
-      {!loading && receipts.length === 0 && <div className="text-gray-600">Поки що немає квитанцій</div>}
+      {!loading && receipts.length === 0 && <div className="text-gray-600">No receipts yet.</div>}
       <ul className="divide-y">
-  {receipts.map((r: Receipt) => (
+        {receipts.map((r: Receipt) => (
           <li key={r.id} className="py-3 flex items-center justify-between">
             <div>
-              <div className="font-medium">Чек #{r.id} {r.orderId ? `(заявка ${r.orderId})` : ''}</div>
-              <div className="text-sm text-gray-600">Сума: {r.amount ?? '-'} {r.currency ?? ''} • {r.createdAt ? new Date(r.createdAt).toLocaleString() : ''}</div>
+              <div className="font-medium">
+                Receipt #{r.id} {r.orderId ? `(order ${r.orderId})` : ''}
+              </div>
+              <div className="text-sm text-gray-600">
+                Amount: {r.amount ?? '-'} {r.currency ?? ''} - {r.createdAt ? new Date(r.createdAt).toLocaleString() : ''}
+              </div>
             </div>
             <div>
               {r.url ? (
-                <a className="text-primary-600 hover:underline" target="_blank" href={r.url} rel="noreferrer">Відкрити PDF</a>
+                <a className="text-primary-600 hover:underline" target="_blank" href={r.url} rel="noreferrer">
+                  Open PDF
+                </a>
               ) : (
-                <button className="px-3 py-1 bg-primary-600 text-white rounded" onClick={() => getUrl(r.id)}>Отримати посилання</button>
+                <button className="px-3 py-1 bg-primary-600 text-white rounded" onClick={() => getUrl(r.id)}>
+                  Generate link
+                </button>
               )}
             </div>
           </li>

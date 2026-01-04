@@ -12,18 +12,34 @@ export type NotificationItem = {
 
 export async function getUnreadCount(): Promise<number> {
   const r = await axios.get('/api/notifications/unread-count')
-  return Number(r.data?.count || 0)
+  return Number(r.data?.data?.unreadCount ?? 0)
 }
 
-export async function getInbox(limit = 50, offset = 0): Promise<NotificationItem[]> {
-  const r = await axios.get('/api/notifications/inbox', { params: { limit, offset } })
-  const items = r.data?.items || r.data?.notifications || []
-  return items
+export async function getInbox(limit = 50, offset = 0, unreadOnly?: boolean, type?: string): Promise<NotificationItem[]> {
+  const page = Math.floor(offset / limit) + 1
+  const r = await axios.get('/api/notifications', {
+    params: {
+      page,
+      limit,
+      unreadOnly: unreadOnly ? 'true' : 'false',
+      ...(type ? { type } : {}),
+    },
+  })
+  const items = r.data?.data?.notifications || []
+  return items.map((n: any) => ({
+    id: n.id,
+    type: n.type,
+    title: n.title,
+    body: n.message,
+    data: n.action || n.order || n.metadata || null,
+    createdAt: n.createdAt,
+    readAt: n.readAt ?? null,
+  }))
 }
 
 export async function markRead(id: number): Promise<void> {
   try {
-    await axios.post(`/api/notifications/${id}/read`)
+    await axios.put(`/api/notifications/${id}/read`)
   } catch (e) {
     // ignore errors silently to avoid blocking UI
   }
@@ -39,9 +55,9 @@ export async function getPreferences(): Promise<NotificationPreferences> {
   const r = await axios.get('/api/notifications/preferences')
   // normalize to simple shape
   return {
-    channels: r.data?.channels || r.data?.prefs?.channels || [],
-    types: r.data?.types || r.data?.prefs?.types || [],
-    ...r.data,
+    channels: r.data?.data?.channels || r.data?.channels || r.data?.prefs?.channels || [],
+    types: r.data?.data?.types || r.data?.types || r.data?.prefs?.types || [],
+    ...(r.data?.data || r.data || {}),
   }
 }
 

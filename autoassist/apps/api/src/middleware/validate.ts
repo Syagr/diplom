@@ -1,12 +1,12 @@
-import type { AnyZodObject } from 'zod';
+import type { ZodTypeAny } from 'zod';
 import { ZodError } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
 import { zodToUa } from '../utils/zod-ua.js';
 
 type SchemaBag = {
-  body?: AnyZodObject;
-  query?: AnyZodObject;
-  params?: AnyZodObject;
+  body?: ZodTypeAny;
+  query?: ZodTypeAny;
+  params?: ZodTypeAny;
 };
 
 export function validate(schema: SchemaBag) {

@@ -4,8 +4,7 @@ import { z } from 'zod';
 import type { OrderStatus } from '@prisma/client';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.js';
-// @ts-expect-error - runtime resolve
-import orderService from '../services/order.service.new';
+import orderService from '../services/order.service.new.js';
 import prisma from '@/utils/prisma.js';
 import { GetOrdersQuery, OrderIdParam, UpdateOrderStatusBody } from '../validators/orders.schema.js';
 
@@ -120,7 +119,6 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
         category: data.category,
         description: data.description ?? null,
         priority: data.priority,
-        createdById: user?.id ?? null,
         locations: data.pickup
           ? { create: [{ kind: 'pickup', lat: data.pickup.lat, lng: data.pickup.lng, address: data.pickup.address ?? null }] }
           : undefined,

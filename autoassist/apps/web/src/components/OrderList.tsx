@@ -22,7 +22,13 @@ interface Order {
   locations?: Array<{ id: number; orderId: number; kind: string; lat?: number; lng?: number; address?: string }>
 }
 
-const API_URL = (import.meta as any).env?.VITE_API_URL || '' // use Vite proxy '/api' when empty
+const API_URL = (import.meta as any).env?.VITE_API_URL || ''
+
+function normalizeError(e: any, fallback: string) {
+  const msg = e?.response?.data?.error?.message || e?.response?.data?.message || e?.message || fallback
+  if (/not[_ ]?found/i.test(String(msg))) return 'Orders service is not available.'
+  return String(msg)
+}
 
 function OrderList() {
   const [orders, setOrders] = useState<Order[]>([])
@@ -32,23 +38,22 @@ function OrderList() {
 
   useEffect(() => {
     fetchOrders()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const fetchOrders = async () => {
     try {
       setLoading(true)
       const response = await axios.get(`${API_URL}/api/orders`)
-      setOrders(response.data.orders)
+      setOrders(response.data.orders || [])
       setError(null)
     } catch (err: any) {
-      // If unauthorized, redirect to login so user can re-authenticate
       if (err?.response?.status === 401) {
-        setError('Необхідна автентифікація. Будь ласка, увійдіть.')
-        // navigate to login after showing message briefly
+        setError('Session expired. Please sign in again.')
         setTimeout(() => navigate('/login'), 500)
         return
       }
-      setError(err.response?.data?.error || 'Помилка завантаження заявок')
+      setError(normalizeError(err, 'Failed to load orders'))
     } finally {
       setLoading(false)
     }
@@ -65,23 +70,23 @@ function OrderList() {
       READY: 'bg-emerald-100 text-emerald-800',
       DELIVERED: 'bg-gray-100 text-gray-800',
       CLOSED: 'bg-gray-100 text-gray-800',
-      CANCELLED: 'bg-red-100 text-red-800'
+      CANCELLED: 'bg-red-100 text-red-800',
     }
     return colors[status as keyof typeof colors] || 'bg-gray-100 text-gray-800'
   }
 
   const getStatusText = (status: string) => {
     const texts = {
-      NEW: 'Нова',
-      TRIAGE: 'Сортування',
-      QUOTE: 'Кошторис',
-      APPROVED: 'Затверджено',
-      SCHEDULED: 'Заплановано',
-      INSERVICE: 'В роботі',
-      READY: 'Готово',
-      DELIVERED: 'Видано',
-      CLOSED: 'Закрито',
-      CANCELLED: 'Скасовано'
+      NEW: 'New',
+      TRIAGE: 'Triage',
+      QUOTE: 'Quote',
+      APPROVED: 'Approved',
+      SCHEDULED: 'Scheduled',
+      INSERVICE: 'In service',
+      READY: 'Ready',
+      DELIVERED: 'Delivered',
+      CLOSED: 'Closed',
+      CANCELLED: 'Cancelled',
     }
     return texts[status as keyof typeof texts] || status
   }
@@ -91,7 +96,7 @@ function OrderList() {
       low: 'bg-gray-100 text-gray-600',
       normal: 'bg-blue-100 text-blue-600',
       high: 'bg-orange-100 text-orange-600',
-      urgent: 'bg-red-100 text-red-600'
+      urgent: 'bg-red-100 text-red-600',
     }
     return colors[priority as keyof typeof colors] || 'bg-gray-100 text-gray-600'
   }
@@ -99,7 +104,7 @@ function OrderList() {
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
-        <div className="text-lg">Завантаження заявок...</div>
+        <div className="text-lg">Loading orders...</div>
       </div>
     )
   }
@@ -108,11 +113,8 @@ function OrderList() {
     return (
       <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
         {error}
-        <button
-          onClick={fetchOrders}
-          className="ml-4 underline hover:no-underline"
-        >
-          Спробувати знову
+        <button onClick={fetchOrders} className="ml-4 underline hover:no-underline">
+          Retry
         </button>
       </div>
     )
@@ -121,23 +123,17 @@ function OrderList() {
   return (
     <div className="max-w-6xl mx-auto">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-3xl font-bold">Заявки</h2>
-        <button
-          onClick={fetchOrders}
-          className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700"
-        >
-          Оновити
+        <h2 className="text-3xl font-bold">Orders</h2>
+        <button onClick={fetchOrders} className="bg-primary-600 text-white px-4 py-2 rounded-md hover:bg-primary-700">
+          Refresh
         </button>
       </div>
 
       {orders.length === 0 ? (
         <div className="text-center py-12 bg-white rounded-lg shadow">
-          <div className="text-gray-500 text-lg">Заявок поки немає</div>
-          <a
-            href="/"
-            className="text-primary-600 hover:text-primary-700 underline mt-2 inline-block"
-          >
-            Створити першу заявку
+          <div className="text-gray-500 text-lg">No orders yet</div>
+          <a href="/" className="text-primary-600 hover:text-primary-700 underline mt-2 inline-block">
+            Create your first order
           </a>
         </div>
       ) : (
@@ -146,11 +142,9 @@ function OrderList() {
             <div key={order.id} className="bg-white rounded-lg shadow p-6">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <h3 className="text-xl font-semibold mb-2">
-                    Заявка #{order.id}
-                  </h3>
+                  <h3 className="text-xl font-semibold mb-2">Order #{order.id}</h3>
                   <div className="flex items-center space-x-4 text-sm text-gray-600">
-                    <span>{new Date(order.createdAt).toLocaleString('uk-UA')}</span>
+                    <span>{new Date(order.createdAt).toLocaleString()}</span>
                     <span>{order.category}</span>
                   </div>
                 </div>
@@ -166,31 +160,36 @@ function OrderList() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <h4 className="font-medium text-gray-900 mb-1">Клієнт</h4>
+                  <h4 className="font-medium text-gray-900 mb-1">Client</h4>
                   <p className="text-gray-600">{order.client.name}</p>
                   <p className="text-gray-600">{order.client.phone}</p>
                 </div>
                 <div>
-                  <h4 className="font-medium text-gray-900 mb-1">Автомобіль</h4>
+                  <h4 className="font-medium text-gray-900 mb-1">Vehicle</h4>
                   <p className="text-gray-600">
                     {order.vehicle.make} {order.vehicle.model}
                   </p>
                   <p className="text-gray-600">{order.vehicle.plate}</p>
                 </div>
               </div>
-              {/* show pickup address if available */}
               {order.locations && order.locations.length > 0 && (
                 <div className="mt-3 text-sm text-gray-700">
                   {(() => {
-                    const pickup = order.locations.find((l:any) => l.kind === 'pickup')
-                    if (pickup) return (<div><strong>Місце виклику:</strong> {pickup.address || `${pickup.lat}, ${pickup.lng}`}</div>)
+                    const pickup = order.locations.find((l: any) => l.kind === 'pickup')
+                    if (pickup) {
+                      return (
+                        <div>
+                          <strong>Pickup:</strong> {pickup.address || `${pickup.lat}, ${pickup.lng}`}
+                        </div>
+                      )
+                    }
                     return null
                   })()}
                 </div>
               )}
               <div className="mt-4 pt-4 border-t border-gray-200">
                 <button onClick={() => navigate(`/orders/${order.id}`)} className="text-primary-600 hover:text-primary-700 font-medium">
-                  Переглянути деталі →
+                  View details
                 </button>
               </div>
             </div>

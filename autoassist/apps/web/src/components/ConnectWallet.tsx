@@ -1,71 +1,97 @@
-import { useEffect, useMemo, useState } from "react";
-import { BrowserProvider, ethers, formatEther, parseEther } from "ethers";
+import { useEffect, useMemo, useState } from 'react'
+import { BrowserProvider, formatEther } from 'ethers'
 import auth from '../utils/auth'
 
 type State = {
-  provider?: BrowserProvider;
-  signer?: ethers.Signer;
-  address?: string;
-  chainId?: number;
-  balance?: string; // in ETH/MATIC (formatted)
-  status?: string;
-  error?: string | null;
-  sending?: boolean;
-  signing?: boolean;
-  recipient: string;
-};
+  provider?: BrowserProvider
+  signer?: any
+  address?: string
+  chainId?: number
+  balance?: string
+  status?: string
+  error?: string | null
+  connecting?: boolean
+  linking?: boolean
+}
 
-const AMOY_HEX = "0x13882"; // 80002
-const AMOY_DEC = 80002;
+const AMOY_HEX = '0x13882' // 80002
+
+function getEthereum(): any {
+  const eth = (window as any).ethereum
+  if (!eth) return null
+  if (Array.isArray(eth.providers)) {
+    return eth.providers.find((p: any) => p.isMetaMask) || eth.providers[0] || eth
+  }
+  return eth
+}
 
 async function ensureAmoyNetwork(): Promise<void> {
-  // пытаемся переключиться; если не добавлена — добавим
+  const eth = getEthereum()
+  if (!eth) throw new Error('Wallet not detected')
   try {
-    await (window as any).ethereum.request({
-      method: "wallet_switchEthereumChain",
+    await eth.request({
+      method: 'wallet_switchEthereumChain',
       params: [{ chainId: AMOY_HEX }],
-    });
+    })
   } catch (e: any) {
     if (e?.code === 4902) {
-      // сеть не добавлена — добавим
-      await (window as any).ethereum.request({
-        method: "wallet_addEthereumChain",
+      await eth.request({
+        method: 'wallet_addEthereumChain',
         params: [
           {
             chainId: AMOY_HEX,
-            chainName: "Polygon Amoy",
-            nativeCurrency: { name: "MATIC", symbol: "MATIC", decimals: 18 },
-            rpcUrls: ["https://rpc-amoy.polygon.technology"],
-            blockExplorerUrls: ["https://www.oklink.com/amoy"],
+            chainName: 'Polygon Amoy',
+            nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 },
+            rpcUrls: ['https://rpc-amoy.polygon.technology'],
+            blockExplorerUrls: ['https://www.oklink.com/amoy'],
           },
         ],
-      });
+      })
     } else {
-      throw e;
+      throw e
     }
   }
 }
 
-export default function ConnectWallet() {
+type Props = {
+  onLinked?: (address: string) => void
+  linkedAddress?: string | null
+  mode?: 'demo' | 'profile'
+}
+
+function normalizeWalletError(err: any): string {
+  const raw = String(err?.message || err || '')
+  if (/no active wallet found/i.test(raw)) {
+    return 'Wallet is locked or has no active account. Open the wallet and unlock/select an account.'
+  }
+  if (/user rejected/i.test(raw) || err?.code === 4001) {
+    return 'Connection rejected in wallet.'
+  }
+  if (err?.code === -32002) {
+    return 'Wallet already has a pending request. Open the extension and finish it.'
+  }
+  if (/not detected/i.test(raw)) {
+    return 'Wallet not detected. Install and enable the extension.'
+  }
+  return raw || 'Wallet error'
+}
+
+export default function ConnectWallet({ onLinked, linkedAddress, mode = 'demo' }: Props = {}) {
   const [st, setSt] = useState<State>({
-    status: "",
+    status: '',
     error: null,
-    recipient: "",
-  });
+  })
 
   const short = useMemo(
-    () =>
-      st.address
-        ? `${st.address.slice(0, 6)}…${st.address.slice(-4)}`
-        : undefined,
-    [st.address]
-  );
+    () => (st.address ? `${st.address.slice(0, 6)}...${st.address.slice(-4)}` : undefined),
+    [st.address],
+  )
 
   async function refreshBasics(provider: BrowserProvider) {
-    const network = await provider.getNetwork();
-    const signer = await provider.getSigner();
-    const address = await signer.getAddress();
-    const bal = await provider.getBalance(address);
+    const network = await provider.getNetwork()
+    const signer = await provider.getSigner()
+    const address = await signer.getAddress()
+    const bal = await provider.getBalance(address)
     setSt((s) => ({
       ...s,
       provider,
@@ -73,183 +99,185 @@ export default function ConnectWallet() {
       address,
       chainId: Number(network.chainId),
       balance: formatEther(bal),
-    }));
+    }))
   }
 
-  async function connect() {
+  async function connect(): Promise<{ signer: any; address: string }> {
     try {
-      setSt((s) => ({ ...s, error: null, status: "Connecting…" }));
-      if (!(window as any).ethereum) {
-        throw new Error("Нет injected-кошелька. Установите MetaMask.");
+      setSt((s) => ({ ...s, error: null, status: 'Connecting...', connecting: true }))
+      const eth = getEthereum()
+      if (!eth) throw new Error('Wallet not detected. Install and enable the extension.')
+      const provider = new BrowserProvider(eth)
+      try {
+        const existing = await eth.request({ method: 'eth_accounts' })
+        if (!existing || existing.length === 0) {
+          try {
+            await eth.request({
+              method: 'wallet_requestPermissions',
+              params: [{ eth_accounts: {} }],
+            })
+          } catch {}
+        }
+        const accounts = await eth.request({ method: 'eth_requestAccounts' })
+        if (!accounts || accounts.length === 0) throw new Error('No active account in wallet')
+      } catch (err: any) {
+        if (err?.code === 4001) throw new Error('Connection rejected in wallet')
+        if (err?.code === -32002) throw new Error('Wallet already has a pending request')
+        throw err
       }
-      const provider = new BrowserProvider((window as any).ethereum);
-      await (window as any).ethereum.request({ method: "eth_requestAccounts" });
-      await refreshBasics(provider);
-      setSt((s) => ({ ...s, status: "Connected" }));
+      await refreshBasics(provider)
+      const signer = await provider.getSigner()
+      const address = await signer.getAddress()
+      setSt((s) => ({ ...s, status: 'Connected', connecting: false }))
+      return { signer, address }
     } catch (e: any) {
-      setSt((s) => ({ ...s, error: e?.message ?? String(e), status: "" }));
+      setSt((s) => ({ ...s, error: normalizeWalletError(e), status: '', connecting: false }))
+      throw e
     }
   }
 
   async function switchToAmoy() {
     try {
-      await ensureAmoyNetwork();
-      if (st.provider) await refreshBasics(st.provider);
+      await ensureAmoyNetwork()
+      if (st.provider) await refreshBasics(st.provider)
     } catch (e: any) {
-      setSt((s) => ({ ...s, error: e?.message ?? String(e) }));
+      setSt((s) => ({ ...s, error: normalizeWalletError(e) }))
     }
   }
 
-  async function signMessage() {
-    if (!st.signer) return;
-    try {
-      setSt((s) => ({ ...s, error: null, signing: true, status: "Signing…" }));
-      const msg = `AutoAssist+ demo: ${new Date().toISOString()}`;
-      const sig = await st.signer.signMessage(msg);
-      setSt((s) => ({
-        ...s,
-        signing: false,
-        status: "Signed",
-        error: null,
-      }));
-      alert(`✅ Signed!\n\nMessage:\n${msg}\n\nSignature:\n${sig}`);
-    } catch (e: any) {
-      setSt((s) => ({
-        ...s,
-        signing: false,
-        status: "",
-        error: e?.message ?? String(e),
-      }));
-    }
-  }
-
-  // Wallet auth flows (frontend). Backend endpoints expected:
-  // GET  /api/auth/wallet/nonce?address=0x...
-  // POST /api/auth/wallet/verify  { address, signature, name? } -> { token }
   async function requestNonce(address: string) {
-    const url = `/api/auth/wallet/nonce?address=${encodeURIComponent(address)}`
+    const url = `/api/wallet/nonce?address=${encodeURIComponent(address)}`
     const r = await fetch(url)
-    if (!r.ok) throw new Error('Не вдалось отримати nonce')
+    if (!r.ok) throw new Error('Failed to fetch nonce')
     const j = await r.json()
-    return j.nonce as string
+    const nonce = j.nonce ?? j.data?.nonce
+    if (!nonce) throw new Error('Nonce missing in response')
+    return nonce as string
   }
 
-  async function verifySignature(address: string, signature: string, name?: string) {
+  async function verifySignature(address: string, signature: string) {
     const body: any = { address, signature }
-    if (name) body.name = name
-    const r = await fetch('/api/auth/wallet/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const r = await fetch('/api/wallet/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
     if (!r.ok) {
-      const t = await r.text().catch(()=>null)
-      throw new Error(t || 'Verification failed')
+      const text = await r.text().catch(() => null)
+      let msg = text || 'Verification failed'
+      try {
+        const j = text ? JSON.parse(text) : null
+        msg = j?.error?.message || j?.message || msg
+      } catch {}
+      throw new Error(msg)
     }
     const j = await r.json()
-    const token = j.token || j.access || j.accessToken
-    if (token) {
-      try { auth.setToken(token, true) } catch {}
-      try { const parts = token.split('.'); if (parts.length>=2) { const payload = JSON.parse(atob(parts[1].replace(/-/g,'+').replace(/_/g,'/'))); auth.saveUserInfo(payload.name ?? null, payload.role ?? null) } } catch {}
-      try { (await import('../utils/socket')).ensureSocket() } catch {}
-      return token
+    const token =
+      (j.token && (j.token.access || j.token)) ||
+      j.access ||
+      j.accessToken
+    if (!token) throw new Error('Token missing from response')
+    try {
+      auth.setToken(token, true)
+    } catch {}
+    try {
+      const parts = token.split('.')
+      if (parts.length >= 2) {
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+        auth.saveUserInfo(payload.name ?? null, payload.role ?? null)
+      }
+    } catch {}
+    try {
+      const sock = await import('../utils/socket')
+      sock.ensureSocket()
+    } catch {}
+    return token
+  }
+
+  async function ensureConnected(): Promise<{ signer: any; address: string }> {
+    if (st.provider) {
+      try {
+        const signer = await st.provider.getSigner()
+        const address = await signer.getAddress()
+        if (!st.address || address.toLowerCase() !== st.address.toLowerCase()) {
+          setSt((s) => ({ ...s, signer, address }))
+        }
+        return { signer, address }
+      } catch {
+        // fall through to connect
+      }
     }
-    throw new Error('Token missing from response')
+    return connect()
   }
 
   async function registerWithWallet() {
-    if (!st.signer) return setSt(s=>({...s, error: 'Connect wallet first'}))
     try {
-      const address = await st.signer.getAddress()
+      const { signer, address } = await ensureConnected()
       const nonce = await requestNonce(address)
       const msg = `AutoAssist Wallet auth nonce: ${nonce}`
-      const sig = await st.signer.signMessage(msg)
-      // optional: ask for display name
-      const name = window.prompt('Enter a display name for your account (optional)') || undefined
-      await verifySignature(address, sig, name)
-      setSt(s=>({...s, status: 'Registered and logged in', error: null}))
-    } catch (e:any) {
-      setSt(s=>({...s, error: e?.message ?? String(e)}))
+      const sig = await signer.signMessage(msg)
+      await verifySignature(address, sig)
+      setSt((s) => ({ ...s, status: 'Registered and logged in', error: null }))
+    } catch (e: any) {
+      setSt((s) => ({ ...s, error: normalizeWalletError(e) }))
     }
   }
 
   async function linkWallet() {
-    if (!st.signer) return setSt(s=>({...s, error: 'Connect wallet first'}))
-    if (!auth.isAuthenticated()) return setSt(s=>({...s, error: 'Please login via email/password first to link wallet'}))
+    if (!auth.isAuthenticated()) {
+      return setSt((s) => ({ ...s, error: 'Please login first to link wallet' }))
+    }
     try {
-      const address = await st.signer.getAddress()
+      setSt((s) => ({ ...s, linking: true, error: null }))
+      const { signer, address } = await ensureConnected()
       const nonce = await requestNonce(address)
       const msg = `AutoAssist Wallet link nonce: ${nonce}`
-      const sig = await st.signer.signMessage(msg)
-      // POST to protected endpoint to link wallet to current user
-      const r = await fetch('/api/wallet/link', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.getToken()}` }, body: JSON.stringify({ address, signature: sig }) })
+      const sig = await signer.signMessage(msg)
+      const r = await fetch('/api/wallet/link', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${auth.getToken()}`,
+        },
+        body: JSON.stringify({ address, signature: sig }),
+      })
       if (!r.ok) throw new Error('Link failed')
-      setSt(s=>({...s, status: 'Wallet linked', error: null}))
-    } catch (e:any) {
-      setSt(s=>({...s, error: e?.message ?? String(e)}))
-    }
-  }
-
-  async function sendTx() {
-    if (!st.signer || !st.address) return;
-    try {
-      setSt((s) => ({ ...s, sending: true, status: "Sending…", error: null }));
-      const to = st.recipient?.trim() || st.address; // по умолчанию — себе
-      if (!ethers.isAddress(to)) throw new Error("Неверный адрес получателя");
-
-      // убедимся, что мы в Amoy
-      const network = await st.signer.provider!.getNetwork();
-      if (Number(network.chainId) !== AMOY_DEC) {
-        await ensureAmoyNetwork();
-      }
-
-      const tx = await st.signer.sendTransaction({
-        to,
-        value: parseEther("0.001"),
-      });
-      const rec = await tx.wait();
-      setSt((s) => ({
-        ...s,
-        sending: false,
-        status: `Tx mined: ${rec?.hash ?? tx.hash}`,
-      }));
-      alert(`✅ Sent 0.001 MATIC to ${to}\nTx: ${tx.hash}`);
-      // обновим баланс
-      if (st.provider) await refreshBasics(st.provider);
+      setSt((s) => ({ ...s, status: 'Wallet linked', error: null, linking: false }))
+      if (onLinked) onLinked(address)
     } catch (e: any) {
-      setSt((s) => ({
-        ...s,
-        sending: false,
-        status: "",
-        error: e?.message ?? String(e),
-      }));
+      setSt((s) => ({ ...s, error: normalizeWalletError(e), linking: false }))
     }
   }
 
   useEffect(() => {
-    const eth = (window as any).ethereum;
-    if (!eth) return;
+    const eth = getEthereum()
+    if (!eth) return
     const onAccounts = async () => {
-      if (st.provider) await refreshBasics(st.provider);
-    };
+      if (st.provider) await refreshBasics(st.provider)
+    }
     const onChain = async () => {
-      if (st.provider) await refreshBasics(st.provider);
-    };
-    eth.on?.("accountsChanged", onAccounts);
-    eth.on?.("chainChanged", onChain);
+      if (st.provider) await refreshBasics(st.provider)
+    }
+    eth.on?.('accountsChanged', onAccounts)
+    eth.on?.('chainChanged', onChain)
     return () => {
-      eth.removeListener?.("accountsChanged", onAccounts);
-      eth.removeListener?.("chainChanged", onChain);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [st.provider]);
+      eth.removeListener?.('accountsChanged', onAccounts)
+      eth.removeListener?.('chainChanged', onChain)
+    }
+  }, [st.provider])
 
   return (
     <div className="rounded-2xl p-4 border shadow-sm">
       <h3 className="text-lg font-semibold mb-2">Web3 (Polygon Amoy)</h3>
+      {linkedAddress ? (
+        <div className="text-xs text-gray-600 mb-2">Linked wallet: {linkedAddress}</div>
+      ) : (
+        <div className="text-xs text-gray-500 mb-2">No linked wallet</div>
+      )}
 
       {!st.address ? (
-        <button
-          onClick={connect}
-          className="px-4 py-2 rounded-xl border hover:bg-gray-50"
-        >
-          Connect Wallet
+        <button onClick={connect} className="px-4 py-2 rounded-xl border hover:bg-gray-50" disabled={st.connecting}>
+          {st.connecting ? 'Connecting...' : 'Connect Wallet'}
         </button>
       ) : (
         <div className="space-y-2">
@@ -258,58 +286,24 @@ export default function ConnectWallet() {
               <span className="font-medium">Address:</span> {short}
             </div>
             <div>
-              <span className="font-medium">ChainId:</span>{" "}
-              {st.chainId ?? "—"}
+              <span className="font-medium">ChainId:</span> {st.chainId ?? '-'}
             </div>
             <div>
-              <span className="font-medium">Balance:</span>{" "}
-              {st.balance ? `${st.balance} MATIC` : "—"}
+              <span className="font-medium">Balance:</span> {st.balance ? `${st.balance} POL` : '-'}
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={switchToAmoy}
-              className="px-3 py-1.5 rounded-xl border hover:bg-gray-50"
-            >
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={switchToAmoy} className="px-3 py-1.5 rounded-xl border hover:bg-gray-50">
               Switch to Amoy
             </button>
-            <button
-              onClick={signMessage}
-              disabled={st.signing}
-              className="px-3 py-1.5 rounded-xl border hover:bg-gray-50 disabled:opacity-60"
-            >
-              {st.signing ? "Signing…" : "Sign message"}
-            </button>
-            <button
-              onClick={registerWithWallet}
-              className="px-3 py-1.5 rounded-xl border hover:bg-gray-50"
-            >
-              Register with wallet
-            </button>
-            <button
-              onClick={linkWallet}
-              className="px-3 py-1.5 rounded-xl border hover:bg-gray-50"
-            >
-              Link wallet
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input
-              placeholder="Recipient (optional, defaults to self)"
-              value={st.recipient}
-              onChange={(e) =>
-                setSt((s) => ({ ...s, recipient: e.target.value }))
-              }
-              className="px-3 py-1.5 rounded-xl border w-[360px]"
-            />
-            <button
-              onClick={sendTx}
-              disabled={st.sending}
-              className="px-3 py-1.5 rounded-xl border hover:bg-gray-50 disabled:opacity-60"
-            >
-              {st.sending ? "Sending…" : "Send 0.001 MATIC"}
+            {mode === 'demo' && (
+              <button onClick={registerWithWallet} className="px-3 py-1.5 rounded-xl border hover:bg-gray-50">
+                Register with wallet
+              </button>
+            )}
+            <button onClick={linkWallet} className="px-3 py-1.5 rounded-xl border hover:bg-gray-50" disabled={st.linking}>
+              {st.linking ? 'Linking...' : 'Link wallet'}
             </button>
           </div>
         </div>
@@ -317,10 +311,10 @@ export default function ConnectWallet() {
 
       {(st.status || st.error) && (
         <div className="mt-3 text-sm">
-          {st.status && <div className="text-gray-700">• {st.status}</div>}
-          {st.error && <div className="text-red-600">• {st.error}</div>}
+          {st.status && <div className="text-gray-700">OK: {st.status}</div>}
+          {st.error && <div className="text-red-600">Error: {st.error}</div>}
         </div>
       )}
     </div>
-  );
+  )
 }

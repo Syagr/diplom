@@ -5,7 +5,7 @@ import { getNonceForAddress, verifyWalletSignature, linkWalletToUser } from '../
 import { validate } from '../middleware/validate.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 // Для checksum-адрес (EIP-55). Можна замінити на ethers.getAddress
-import { getAddress as toChecksumAddress } from 'viem';
+import { getAddress as toChecksumAddress } from 'ethers';
 
 export const walletRouter = Router();
 
@@ -35,8 +35,8 @@ walletRouter.get('/nonce', validate(nonceSchema), async (req: Request, res: Resp
   try {
     const { address, chainId } = req.query as unknown as { address: string; chainId?: number };
     // Сервіс всередині: створити короткоживучий nonce, прив’язаний до адреси (+ chainId), видаляти після verify
-    const nonce = await getNonceForAddress(address, { chainId });
-    return res.json({ nonce, address, chainId: chainId ?? null });
+    const out = await getNonceForAddress(address);
+    return res.json({ nonce: out.nonce, address, chainId: chainId ?? null });
   } catch (e) { return next(e); }
 });
 
@@ -46,28 +46,22 @@ walletRouter.get('/nonce', validate(nonceSchema), async (req: Request, res: Resp
 //  B) SIWE: { siweMessage, signature }  (рекомендовано)
 // Якщо надходить siweMessage — перевіряємо саме його; інакше — fallback на простий варіант.
 const verifyBody = {
-  body: z.union([
-    z.object({
-      address: EthAddress,
-      signature: Signature,
-      name: z.string().max(120).optional(),
-    }),
-    z.object({
-      siweMessage: z.string().min(30),   // сировий EIP-4361
-      signature: Signature,
-    }),
-  ]),
+  body: z.object({
+    address: EthAddress,
+    signature: Signature,
+    name: z.string().max(120).optional(),
+  }),
 };
 
 walletRouter.post('/verify', validate(verifyBody), async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const body = req.body as any;
+    const body = req.body as { address: string; signature: string; name?: string };
 
     // Сервіс `verifyWalletSignature` має:
     //  - якщо є siweMessage: розпарсити, перевірити domain/uri/chainId/nonce/expiry згідно EIP-4361
     //  - якщо простий режим: брати збережений nonce для address і звірити підпис (EIP-191/EIP-712), після чого видалити nonce
     //  - повернути токен (JWT) або сесію
-    const token = await verifyWalletSignature(body);
+    const token = await verifyWalletSignature(body.address, body.signature, body.name);
 
     // Опційно: видати куку (HttpOnly) замість тела
     return res.json({ token });

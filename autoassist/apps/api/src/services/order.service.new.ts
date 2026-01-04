@@ -1,6 +1,6 @@
 // services/order.service.ts
 import prisma from '@/utils/prisma.js';
-import type { OrderStatus, Prisma } from '@prisma/client';
+import type { OrderStatus, OrderChannel, Prisma } from '@prisma/client';
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 
@@ -134,7 +134,7 @@ export class OrderService {
     vehicleId: number;
     category: string;
     description?: string;
-    channel?: string;
+    channel?: OrderChannel;
     priority?: 'low' | 'normal' | 'high' | 'urgent';
   }) {
     return prisma.$transaction(async (tx) => {
@@ -144,7 +144,7 @@ export class OrderService {
           vehicleId: orderData.vehicleId,
           category: orderData.category,
           description: orderData.description ?? null,
-          channel: orderData.channel ?? null,
+          channel: (orderData.channel ?? 'web') as OrderChannel,
           priority: (orderData.priority as any) ?? 'normal',
           status: 'NEW',
         },
