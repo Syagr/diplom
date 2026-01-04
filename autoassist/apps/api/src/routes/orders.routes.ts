@@ -7,6 +7,7 @@ import { validate } from '../middleware/validate.js';
 import orderService from '../services/order.service.new.js';
 import prisma from '@/utils/prisma.js';
 import { GetOrdersQuery, OrderIdParam, UpdateOrderStatusBody } from '../validators/orders.schema.js';
+import NotificationService from '@/services/notification.service.js';
 
 const router = Router();
 
@@ -17,6 +18,22 @@ const isStaff = (u?: AuthUser) => !!u && ['admin', 'manager'].includes(String(u.
 const safeEmit = (req: Request, room: string, event: string, payload: unknown) => {
   const io = req.app?.get?.('io');
   if (io?.to) io.to(room).emit(event, payload);
+};
+const notificationService = new NotificationService();
+const getUserClientId = async (userId: number) => {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { clientId: true, phone: true, email: true },
+  });
+  if (!user) return null;
+  if (user.clientId) return user.clientId;
+  const byPhone = user.phone ? await prisma.client.findUnique({ where: { phone: user.phone } }) : null;
+  const byEmail = !byPhone && user.email ? await prisma.client.findFirst({ where: { email: user.email } }) : null;
+  const clientId = byPhone?.id ?? byEmail?.id ?? null;
+  if (clientId) {
+    await prisma.user.update({ where: { id: userId }, data: { clientId } }).catch(() => {});
+  }
+  return clientId;
 };
 
 // ---- validation ----
@@ -111,6 +128,21 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
           },
         });
 
+    // 2.5) link user -> client when creating orders as customer
+    if (user && !isStaff(user)) {
+      try {
+        const currentClientId = await getUserClientId(user.id);
+        if (!currentClientId || currentClientId !== client.id) {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { clientId: client.id },
+          });
+        }
+      } catch {
+        // ignore linking failures, order can still be created
+      }
+    }
+
     // 3) створити order
     const order = await prisma.order.create({
       data: {
@@ -126,6 +158,11 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     });
 
     safeEmit(req, `order:${order.id}`, 'order:created', { orderId: order.id, category: order.category });
+    try {
+      await notificationService.sendOrderNotification('ORDER_CREATED', order.id);
+    } catch {
+      // non-fatal for order creation
+    }
     return res.status(201).json({ success: true, orderId: order.id });
   } catch (e) {
     console.error('Order create error (routes):', e);
@@ -144,7 +181,10 @@ router.get('/', validate({ query: GetOrdersQuery }), async (req: Request, res: R
     const { status, page, limit, category } = ListQuery.parse(req.query);
 
     const filters: any = {};
-    if (!isStaff(user)) filters.clientId = user.id; // клієнт — лише свої
+    if (!isStaff(user)) {
+      const clientId = await getUserClientId(user.id);
+      filters.clientId = clientId ?? -1;
+    } // клієнт — лише свої
     if (status) filters.status = status;
     if (category) filters.category = category;
 
@@ -168,8 +208,11 @@ router.get('/:id', validate({ params: OrderIdParam }), async (req: Request, res:
     const order = await orderService.getOrderById(orderId);
     if (!order) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Order not found' } });
 
-    if (!isStaff(user) && order.clientId !== user.id) {
-      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied' } });
+    if (!isStaff(user)) {
+      const clientId = await getUserClientId(user.id);
+      if (!clientId || order.clientId !== clientId) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied' } });
+      }
     }
 
     return res.json(order);
@@ -207,7 +250,8 @@ router.put('/:id/status', validate({ params: OrderIdParam }), validate({ body: U
       CANCELLED: [],
     };
 
-    const isOwner = order.clientId === user.id;
+    const clientId = isStaff(user) ? null : await getUserClientId(user.id);
+    const isOwner = !!clientId && order.clientId === clientId;
     const current = order.status as OrderStatus;
 
     if (isOwner && !isStaff(user)) {
@@ -223,6 +267,11 @@ router.put('/:id/status', validate({ params: OrderIdParam }), validate({ body: U
 
     const updated = await orderService.updateOrderStatus(orderId, status);
     safeEmit(req, `order:${orderId}`, 'order:updated', { id: orderId, kind: 'status', status });
+    try {
+      await notificationService.sendOrderNotification('ORDER_UPDATED', orderId);
+    } catch {
+      // ignore notification failures
+    }
 
     return res.json(updated);
   } catch (e) {

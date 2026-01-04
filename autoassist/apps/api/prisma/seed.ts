@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
@@ -150,6 +151,22 @@ async function main() {
       phone: client.phone,
       passwordHash: '', // wallet-based or external auth in demo
       role: 'customer',
+    },
+  });
+
+  // ---------------------------
+  // Admin user
+  // ---------------------------
+  const adminPassword = 'admin123';
+  const adminHash = await bcrypt.hash(adminPassword, 12);
+  await prisma.user.upsert({
+    where: { email: 'admin@example.com' },
+    update: { passwordHash: adminHash, role: 'admin', name: 'Admin' },
+    create: {
+      email: 'admin@example.com',
+      passwordHash: adminHash,
+      role: 'admin',
+      name: 'Admin',
     },
   });
 

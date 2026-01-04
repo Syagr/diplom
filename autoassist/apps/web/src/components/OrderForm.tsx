@@ -62,7 +62,7 @@ function OrderForm({}: OrderFormProps) {
         },
         category: formData.category,
         description: formData.description || undefined,
-  channel: 'web',
+        channel: 'web',
         pickup: (formData.pickupLat && formData.pickupLng) ? {
           lat: parseFloat(formData.pickupLat),
           lng: parseFloat(formData.pickupLng),
@@ -70,9 +70,13 @@ function OrderForm({}: OrderFormProps) {
         } : undefined
       })
 
+      const createdId = response.data?.orderId ?? response.data?.order?.id
+
       setSubmitResult({
         success: true,
-        message: `Заявка #${response.data.order.id} створена успішно!`
+        message: createdId
+          ? `Order #${createdId} created successfully.`
+          : 'Order created successfully.'
       })
 
       // Reset form
@@ -95,7 +99,11 @@ function OrderForm({}: OrderFormProps) {
     } catch (error: any) {
       setSubmitResult({
         success: false,
-        message: error.response?.data?.error || 'Помилка при створенні заявки'
+        message:
+          error.response?.data?.error?.message ||
+          error.response?.data?.message ||
+          error.message ||
+          'Failed to create order.'
       })
     } finally {
       setIsSubmitting(false)
