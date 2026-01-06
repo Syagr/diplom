@@ -5,7 +5,9 @@ export type NotificationItem = {
   type: string
   title?: string
   body?: string
-  data?: any
+  priority?: string
+  order?: { id: number; status?: string } | null
+  action?: { label?: string; url?: string } | null
   createdAt: string
   readAt?: string | null
 }
@@ -31,7 +33,9 @@ export async function getInbox(limit = 50, offset = 0, unreadOnly?: boolean, typ
     type: n.type,
     title: n.title,
     body: n.message,
-    data: n.action || n.order || n.metadata || null,
+    priority: n.priority,
+    order: n.order || null,
+    action: n.action || null,
     createdAt: n.createdAt,
     readAt: n.readAt ?? null,
   }))

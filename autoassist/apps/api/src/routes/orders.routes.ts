@@ -8,6 +8,8 @@ import orderService from '../services/order.service.new.js';
 import prisma from '@/utils/prisma.js';
 import { GetOrdersQuery, OrderIdParam, UpdateOrderStatusBody } from '../validators/orders.schema.js';
 import NotificationService from '@/services/notification.service.js';
+import { autoCalculateEstimate } from '@/services/estimates.service.js';
+import { findNearbyServiceCenters } from '@/services/serviceCenters.service.js';
 
 const router = Router();
 
@@ -49,8 +51,8 @@ const CreateOrderBody = z.object({
     model: z.string().trim().optional(),
     year: z.coerce.number().int().positive().max(new Date().getFullYear() + 1).optional(),
   }),
-  category: z.string().min(1).trim(),
-  description: z.string().trim().optional(),
+  category: z.enum(['engine', 'transmission', 'suspension', 'electrical', 'brakes', 'other']),
+  description: z.string().trim().min(5),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
   pickup: z.object({
     lat: z.coerce.number(),
@@ -156,6 +158,49 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
           : undefined,
       },
     });
+
+    try {
+      await prisma.orderTimeline.create({
+        data: {
+          orderId: order.id,
+          event: 'Order created',
+          details: { category: order.category, priority: order.priority },
+        },
+      });
+    } catch {
+      // ignore timeline failures on create
+    }
+
+    if (data.pickup) {
+      try {
+        const [nearest] = await findNearbyServiceCenters({
+          lat: data.pickup.lat,
+          lng: data.pickup.lng,
+          limit: 1,
+        });
+        if (nearest?.id) {
+          await prisma.order.update({
+            where: { id: order.id },
+            data: { serviceCenterId: nearest.id },
+          });
+          await prisma.orderTimeline.create({
+            data: {
+              orderId: order.id,
+              event: 'Service center suggested',
+              details: { serviceCenterId: nearest.id, distanceKm: Number(nearest.distanceKm).toFixed(2) },
+            },
+          });
+        }
+      } catch {
+        // ignore service center suggestion failures
+      }
+    }
+
+    try {
+      await autoCalculateEstimate({ orderId: order.id, profile: 'STANDARD' });
+    } catch {
+      // non-fatal for order creation
+    }
 
     safeEmit(req, `order:${order.id}`, 'order:created', { orderId: order.id, category: order.category });
     try {

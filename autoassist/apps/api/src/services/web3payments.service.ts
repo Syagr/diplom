@@ -91,7 +91,29 @@ export async function verifyAndCompleteWeb3Payment({ orderId, paymentId, txHash 
   const payment = await prisma.payment.findUnique({ where: { id: Number(paymentId) } });
   if (!payment) throw Object.assign(new Error('PAYMENT_NOT_FOUND'), { status: 404 });
   if (payment.orderId !== Number(orderId)) throw Object.assign(new Error('ORDER_MISMATCH'), { status: 400 });
-  if (payment.status === 'COMPLETED') return payment; // идемпотентно
+  if (payment.status === 'COMPLETED') return payment
+
+  const demoMode = ['1', 'true', 'yes'].includes(String(process.env.WEB3_DEMO_MODE || '').toLowerCase());
+  if (demoMode) {
+    const updated = await prisma.$transaction(async (tx) => {
+      const p = await tx.payment.update({
+        where: { id: payment.id },
+        data: { status: 'COMPLETED', txHash, completedAt: new Date() },
+      });
+      await tx.orderTimeline.create({
+        data: {
+          orderId: p.orderId,
+          event: 'Payment completed (web3 demo)',
+          details: { paymentId: p.id, txHash, network: 'evm', amount: Number(p.amount), token: 'DEMO' },
+        },
+      });
+      return p;
+    });
+    generateReceiptForPayment(updated.id).catch(() => {/* noop */});
+    enqueueEmailNotification({ type: 'payment_completed', orderId: updated.orderId, paymentId: updated.id }).catch(() => {/* noop */});
+    return updated;
+  }
+; // идемпотентно
 
   const provider = getProvider();
   // Chain check (defense-in-depth)

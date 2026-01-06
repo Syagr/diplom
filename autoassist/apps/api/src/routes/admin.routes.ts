@@ -19,7 +19,7 @@ const AuditQuery = z.object({
     .regex(/^\d+$/)
     .transform(Number)
     .optional()
-    .default('100' as unknown as number) // zod trick: перетрится transform-ом
+    .default('100') // zod trick: перетрится transform-ом
     .pipe(z.number().int().min(1).max(200)),
   // фильтры
   type: z.string().min(1).optional(),

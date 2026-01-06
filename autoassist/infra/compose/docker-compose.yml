@@ -139,6 +139,7 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin123
       MINIO_BUCKET: attachments
+      MINIO_PUBLIC_ENDPOINT: http://host.docker.internal:12002
       CORS_ORIGIN: http://localhost:5173,http://localhost:5174,http://localhost
       STRIPE_SECRET_KEY: sk_test_dummy
       WEB3_PROVIDER_URL: ${WEB3_PROVIDER_URL:-}
@@ -215,5 +216,41 @@ services:
       prisma-migrate:
         condition: service_started
     entrypoint: ["/bin/sh","/work/scripts/run-api-tests.sh"]
+    networks:
+      - autoassist-network
+
+  notify-worker:
+    image: node:18-bullseye
+    working_dir: /work/apps/api
+    volumes:
+      - ../../:/work
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://test:test@db:5432/autoassist?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MINIO_BUCKET: attachments
+      MINIO_PUBLIC_ENDPOINT: http://host.docker.internal:12002
+      CORS_ORIGIN: http://localhost:5173,http://localhost:5174,http://localhost
+      WEB3_PROVIDER_URL: ${WEB3_PROVIDER_URL:-}
+      USDC_TOKEN_ADDRESS: ${USDC_TOKEN_ADDRESS:-}
+      PLATFORM_RECEIVE_ADDRESS: ${PLATFORM_RECEIVE_ADDRESS:-}
+      WEB3_ENFORCE_AMOUNT: ${WEB3_ENFORCE_AMOUNT:-false}
+      WEB3_DEMO_MODE: ${WEB3_DEMO_MODE:-1}
+      RECEIPT_FONT_DIR: /app/assets
+      USDC_DECIMALS: ${USDC_DECIMALS:-6}
+      EXPECTED_SIWE_DOMAIN: ${EXPECTED_SIWE_DOMAIN:-localhost}
+      EXPECTED_SIWE_URI_PREFIX: ${EXPECTED_SIWE_URI_PREFIX:-http://localhost}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    entrypoint: ["/bin/sh","/work/scripts/start-notify-worker.sh"]
     networks:
       - autoassist-network

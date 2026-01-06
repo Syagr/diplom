@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
 // removed: ValidationError (was unused)
 import { validate } from '../middleware/validate.js';
 import {
@@ -9,6 +10,8 @@ import {
 import {
   presignUpload,
   completeUpload,
+  uploadDirect,
+  getAttachmentStream,
   presignDownload,
   listByOrder,
   removeAttachment,
@@ -18,6 +21,11 @@ export const attachmentsRouter = Router();
 export default attachmentsRouter;
 
 type ReqUser = { id?: number | string; role?: string };
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: Number(process.env.ATTACH_MAX_BYTES || 50 * 1024 * 1024) },
+});
 
 /** UA: Дістаємо userId/role з req.user; EN: Extract userId/role from req.user */
 const getAuth = (req: any) => {
@@ -53,6 +61,44 @@ attachmentsRouter.post(
         id: data.attachmentId,
       });
 
+      setNoStore(res);
+      return res.status(201).json(data);
+    } catch (e: any) {
+      return next(e);
+    }
+  },
+);
+
+/** POST /api/attachments/upload */
+attachmentsRouter.post(
+  '/upload',
+  upload.single('file'),
+  async (req, res, next) => {
+    try {
+      const { userId, role } = getAuth(req);
+      const orderId = Number(req.body?.orderId ?? 0);
+      const kind = String(req.body?.kind ?? '');
+      const file = req.file as Express.Multer.File | undefined;
+      if (!orderId || !Number.isFinite(orderId)) {
+        return res.status(400).json({ error: { code: 'INVALID_ORDER_ID', message: 'orderId is required' } });
+      }
+      if (!file) {
+        return res.status(400).json({ error: { code: 'FILE_REQUIRED', message: 'file is required' } });
+      }
+
+      const data = await uploadDirect(
+        userId,
+        role,
+        { orderId, kind },
+        {
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          buffer: file.buffer,
+        },
+      );
+
+      req.app.get('io')?.to(`order:${orderId}`).emit('attachment:ready', { id: data.attachmentId });
       setNoStore(res);
       return res.status(201).json(data);
     } catch (e: any) {
@@ -103,6 +149,30 @@ attachmentsRouter.get(
       // UA: вкладення не кешуємо; EN: do not cache the list
       setNoStore(res);
       return res.json({ items });
+    } catch (e: any) {
+      return next(e);
+    }
+  },
+);
+
+/** GET /api/attachments/:id/file */
+attachmentsRouter.get(
+  '/:id/file',
+  validate({ params: AttachmentIdParam }),
+  async (req, res, next) => {
+    try {
+      const id = Number((req.params as any).id);
+      const { userId, role } = getAuth(req);
+      const data = await getAttachmentStream(userId, role, id);
+      const inlineTypes = ['application/pdf'];
+      const isInline = String(data.contentType || '').startsWith('image/') || inlineTypes.includes(String(data.contentType || ''));
+      res.set({
+        'Content-Type': data.contentType || 'application/octet-stream',
+        'Content-Disposition': `${isInline ? 'inline' : 'attachment'}; filename="${data.filename || 'file'}"`,
+      });
+      setNoStore(res);
+      data.stream.on('error', next);
+      return data.stream.pipe(res);
     } catch (e: any) {
       return next(e);
     }

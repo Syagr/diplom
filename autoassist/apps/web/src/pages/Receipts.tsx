@@ -38,16 +38,11 @@ export default function ReceiptsPage() {
     load()
   }, [])
 
-  async function getUrl(id: number) {
+  function openReceipt(id: number) {
+    const url = `/api/receipts/${id}/file`
+    setReceipts((prev: Receipt[]) => prev.map((rc: Receipt) => (rc.id === id ? { ...rc, url } : rc)))
     try {
-      const r = await axios.post(`/api/receipts/${id}/url`)
-      const url = r.data?.url
-      if (url) {
-        setReceipts((prev: Receipt[]) => prev.map((rc: Receipt) => (rc.id === id ? { ...rc, url } : rc)))
-        try {
-          window.open(url, '_blank')
-        } catch {}
-      }
+      window.open(url, '_blank')
     } catch (e: any) {
       setError(normalizeError(e, 'Failed to open receipt'))
     }
@@ -76,7 +71,7 @@ export default function ReceiptsPage() {
                   Open PDF
                 </a>
               ) : (
-                <button className="px-3 py-1 bg-primary-600 text-white rounded" onClick={() => getUrl(r.id)}>
+                <button className="px-3 py-1 bg-primary-600 text-white rounded" onClick={() => openReceipt(r.id)}>
                   Generate link
                 </button>
               )}

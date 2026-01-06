@@ -1,9 +1,8 @@
-// services/notification.service.ts
+﻿// services/notification.service.ts
 import prisma from '@/utils/prisma.js';
 import { logger } from '../libs/logger.js';
 import SocketService from './socket.service.js';
 
-// ---- Domain types ----
 export type NotificationType =
   | 'ORDER_CREATED'
   | 'ORDER_UPDATED'
@@ -38,14 +37,7 @@ export default class NotificationService {
     this.socketService = socketService;
   }
 
-  // ========== Public API ==========
-
-  /**
-   * Persist notification and dispatch via requested channels.
-   * Records per-channel delivery results.
-   */
   async sendNotification(data: NotificationData): Promise<void> {
-    // persist base notification first
     const notification = await prisma.notification.create({
       data: {
         type: data.type,
@@ -57,12 +49,11 @@ export default class NotificationService {
         metadata: data.metadata ?? {},
         channels: data.channels,
         action: data.action ?? null,
-        status: 'SENT', // logical creation status (per-channel statuses live in notificationDelivery)
+        status: 'SENT',
       },
       select: { id: true },
     });
 
-    // dispatch all channels (independent best-effort)
     const results = await Promise.allSettled(
       data.channels.map((channel) => this.sendThroughChannel(channel, data, notification.id))
     );
@@ -78,15 +69,12 @@ export default class NotificationService {
     });
   }
 
-  /**
-   * Get user notification preferences (with defaults).
-   */
   async getUserPreferences(userId: number): Promise<{
     channels: NotificationChannel[];
     types: string[];
   }> {
     const pref = await prisma.notificationPreference.findUnique({
-      where: { userId }, // numeric FK
+      where: { userId },
     });
 
     return {
@@ -95,9 +83,6 @@ export default class NotificationService {
     };
   }
 
-  /**
-   * Update user notification preferences (upsert).
-   */
   async updateUserPreferences(
     userId: number,
     preferences: { channels?: NotificationChannel[]; types?: string[] }
@@ -118,9 +103,6 @@ export default class NotificationService {
     logger.info('User notification preferences updated', { userId });
   }
 
-  /**
-   * Mark one notification as read for user (idempotent).
-   */
   async markAsRead(notificationId: number, userId: number): Promise<void> {
     await prisma.notification.updateMany({
       where: { id: notificationId, userId },
@@ -128,9 +110,6 @@ export default class NotificationService {
     });
   }
 
-  /**
-   * Paginated notifications & counters.
-   */
   async getUserNotifications(
     userId: number,
     options: { page?: number; limit?: number; unreadOnly?: boolean; type?: NotificationType } = {}
@@ -151,9 +130,7 @@ export default class NotificationService {
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
-        include: {
-          order: { select: { id: true, status: true } },
-        },
+        include: { order: { select: { id: true, status: true } } },
       }),
       prisma.notification.count({ where }),
       prisma.notification.count({ where: { userId, readAt: null } }),
@@ -162,16 +139,10 @@ export default class NotificationService {
     return { notifications, total, unreadCount };
   }
 
-  /**
-   * Unread counter for a user
-   */
   async getUnreadCount(userId: number): Promise<number> {
-  return prisma.notification.count({ where: { userId, readAt: null } });
+    return prisma.notification.count({ where: { userId, readAt: null } });
   }
 
-  /**
-   * High-level helper for order-related events; honors client preferences.
-   */
   async sendOrderNotification(
     type: Exclude<NotificationType, 'SYSTEM_ALERT' | 'PAYMENT_RECEIVED'>,
     orderId: number,
@@ -182,44 +153,40 @@ export default class NotificationService {
       include: { client: true },
     });
     if (!order) throw new Error('ORDER_NOT_FOUND');
-    // Resolve recipient user for the client (first linked user)
-    const recipientUser = await prisma.user.findFirst({ where: { clientId: order.clientId }, select: { id: true } });
-    if (!recipientUser) {
-      // no linked user to receive notifications
-      return;
-    }
+
+    const recipientUser = await prisma.user.findFirst({
+      where: { clientId: order.clientId },
+      select: { id: true },
+    });
+    if (!recipientUser) return;
 
     const templates: Record<
       Exclude<NotificationType, 'SYSTEM_ALERT' | 'PAYMENT_RECEIVED'>,
       { title: string; message: (o: any) => string }
     > = {
       ORDER_CREATED: {
-        title: 'Новая заявка создана',
-        message: (o) =>
-          customMessage ??
-          `Заявка #${o.orderNumber ?? o.id} успешно создана и передана на рассмотрение`,
+        title: 'Order created',
+        message: (o) => customMessage ?? `Order #${o.orderNumber ?? o.id} was created. We will contact you soon.`,
       },
       ORDER_UPDATED: {
-        title: 'Статус заявки изменён',
-        message: (o) =>
-          customMessage ?? `Заявка #${o.orderNumber ?? o.id} обновлена. Новый статус: ${o.status}`,
+        title: 'Order updated',
+        message: (o) => customMessage ?? `Order #${o.orderNumber ?? o.id} was updated. Current status: ${o.status}`,
       },
       TOW_ASSIGNED: {
-        title: 'Эвакуатор назначен',
-        message: (o) => customMessage ?? `К заявке #${o.orderNumber ?? o.id} назначен эвакуатор`,
+        title: 'Tow assigned',
+        message: (o) => customMessage ?? `A tow has been assigned to order #${o.orderNumber ?? o.id}.`,
       },
       INSPECTION_COMPLETED: {
-        title: 'Осмотр завершён',
-        message: (o) => customMessage ?? `Осмотр по заявке #${o.orderNumber ?? o.id} завершён`,
+        title: 'Inspection completed',
+        message: (o) => customMessage ?? `Inspection for order #${o.orderNumber ?? o.id} is completed.`,
       },
     };
 
     const tpl = templates[type] ?? {
-      title: 'Обновление заявки',
-      message: (_o: any) => customMessage ?? 'Статус вашей заявки изменился',
+      title: 'Order update',
+      message: (_o: any) => customMessage ?? 'Your order has been updated.',
     };
 
-    // client preferences
     const prefs = await this.getUserPreferences(recipientUser.id);
     await this.sendNotification({
       type,
@@ -229,11 +196,9 @@ export default class NotificationService {
       userId: recipientUser.id,
       orderId,
       channels: prefs.channels,
-      action: { label: 'Открыть заявку', url: `/orders/${orderId}` },
+      action: { label: 'Open order', url: `/orders/${orderId}` },
     });
   }
-
-  // ========== Private helpers ==========
 
   private async sendThroughChannel(
     channel: NotificationChannel,
@@ -250,17 +215,15 @@ export default class NotificationService {
           break;
       }
 
-      // mark delivered for this channel
       await prisma.notificationDelivery.create({
         data: {
-          notificationId, // numeric FK
+          notificationId,
           channel,
           status: 'DELIVERED',
           deliveredAt: new Date(),
         },
       });
     } catch (err) {
-      // per-channel failure is non-fatal; record and continue
       await prisma.notificationDelivery.create({
         data: {
           notificationId,
@@ -310,7 +273,6 @@ export default class NotificationService {
     });
     if (!user?.email) throw new Error('User email not found');
 
-    // TODO: integrate real email provider (SES/SendGrid/Mailgun)
     const emailPayload = {
       to: user.email,
       subject: data.title,
@@ -320,8 +282,6 @@ export default class NotificationService {
 
     logger.info('Email notification (mock send)', emailPayload);
   }
-
-  // SMS, Telegram and mobile push channels are removed in web/web3-only scope
 
   private generateEmailTemplate(data: NotificationData, firstName?: string): string {
     const safeTitle = escapeHtml(data.title);
@@ -343,16 +303,15 @@ body{font-family:Arial,sans-serif;line-height:1.6;color:#333}
   <div class="header"><h1>AutoAssist+</h1></div>
   <div class="content">
     <h2>${safeTitle}</h2>
-    ${firstName ? `<p>Здравствуйте, ${escapeHtml(firstName)}!</p>` : ''}
+    ${firstName ? `<p>Hello, ${escapeHtml(firstName)}!</p>` : ''}
     <p>${safeMsg}</p>
     ${cta}
   </div>
-  <div class="footer"><p>AutoAssist+ — ваш надёжный помощник на дороге</p></div>
+  <div class="footer"><p>AutoAssist+ — service and insurance platform</p></div>
 </body></html>`;
   }
 }
 
-// ---- tiny escaping helpers for email ----
 function escapeHtml(s: string) {
   return s
     .replace(/&/g, '&amp;')
@@ -363,4 +322,3 @@ function escapeHtml(s: string) {
 function escapeAttr(s: string) {
   return escapeHtml(s).replace(/'/g, '&#39;');
 }
-// (no Markdown escaping needed)

@@ -45,6 +45,7 @@ export class OrderService {
         include: {
           client: { select: { id: true, name: true, phone: true, email: true } },
           vehicle: { select: { id: true, plate: true, make: true, model: true, year: true, vin: true } },
+          serviceCenter: { select: { id: true, name: true, address: true, lat: true, lng: true, city: true } },
           estimate: true,
           payments: true,
           tow: true,
@@ -79,6 +80,7 @@ export class OrderService {
       include: {
         client: { select: { id: true, name: true, phone: true, email: true } },
         vehicle: { select: { id: true, plate: true, make: true, model: true, year: true, vin: true } },
+        serviceCenter: { select: { id: true, name: true, address: true, lat: true, lng: true, city: true } },
         estimate: true,
         payments: true,
         tow: true,

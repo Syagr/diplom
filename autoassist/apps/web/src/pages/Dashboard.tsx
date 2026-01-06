@@ -17,6 +17,11 @@ function normalizeError(e: any, fallback: string) {
   return String(msg)
 }
 
+function formatType(type?: string) {
+  if (!type) return 'Notification'
+  return type.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase())
+}
+
 export default function DashboardPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [notes, setNotes] = useState<NotificationItem[]>([])
@@ -93,7 +98,7 @@ export default function DashboardPage() {
           <ul className="bg-white rounded shadow divide-y">
             {notes.map((n) => (
               <li key={n.id} className="p-4">
-                <div className="font-medium">{n.title ?? n.type}</div>
+                <div className="font-medium">{n.title ?? formatType(n.type)}</div>
                 <div className="text-sm text-gray-700">{n.body ?? ''}</div>
                 <div className="text-xs text-gray-500">{new Date(n.createdAt).toLocaleString()}</div>
               </li>

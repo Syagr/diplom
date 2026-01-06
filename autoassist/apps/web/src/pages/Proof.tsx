@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import axios from 'axios'
 
@@ -16,16 +16,16 @@ export default function ProofViewer() {
         const r = await axios.get(`/api/orders/${id}/proof`)
         setData(r.data)
       } catch (e:any) {
-        setError(e?.response?.data?.error || 'Не вдалося отримати доказ виконання')
+        setError(e?.response?.data?.error?.message || 'Не вдалося отримати proof')
       } finally {
         setLoading(false)
       }
     })()
   }, [id])
 
-  if (loading) return <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow">Завантаження…</div>
+  if (loading) return <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow">Завантаження...</div>
   if (error) return <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow text-red-700">{error}</div>
-  if (!data) return <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow">Немає даних</div>
+  if (!data) return <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow">Немає даних.</div>
 
   const evidence = data?.evidence || data?.attachments || []
   const proofHash = data?.proofHash || data?.hash
@@ -33,15 +33,15 @@ export default function ProofViewer() {
 
   return (
     <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow">
-      <h2 className="text-2xl font-bold mb-4">Доказ виконання заявки #{id}</h2>
+      <h2 className="text-2xl font-bold mb-4">Proof виконання заявки #{id}</h2>
       <div className="mb-2 text-sm text-gray-700">Хеш доказу: <span className="font-mono break-all">{proofHash || '—'}</span></div>
       {ipfsUrl && (
-        <div className="mb-4 text-sm"><a className="text-primary-600 hover:underline" target="_blank" rel="noreferrer" href={ipfsUrl}>Відкрити у IPFS</a></div>
+        <div className="mb-4 text-sm"><a className="text-primary-600 hover:underline" target="_blank" rel="noreferrer" href={ipfsUrl}>Перейти до IPFS</a></div>
       )}
       <div>
-        <h3 className="font-semibold mb-2">Додані матеріали</h3>
+        <h3 className="font-semibold mb-2">Докази</h3>
         {evidence.length === 0 ? (
-          <div className="text-gray-600">Матеріали відсутні</div>
+          <div className="text-gray-600">Немає доказів.</div>
         ) : (
           <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {evidence.map((ev:any, i:number) => (

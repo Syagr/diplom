@@ -20,6 +20,8 @@ interface Order {
     year?: number
   }
   locations?: Array<{ id: number; orderId: number; kind: string; lat?: number; lng?: number; address?: string }>
+  payments?: Array<{ status?: string }>
+  estimate?: { itemsJson?: any; laborJson?: any; total?: number; currency?: string; approved?: boolean }
 }
 
 const API_URL = (import.meta as any).env?.VITE_API_URL || ''
@@ -140,6 +142,25 @@ function OrderList() {
         <div className="grid gap-4">
           {orders.map((order) => (
             <div key={order.id} className="bg-white rounded-lg shadow p-6">
+              {(() => {
+                const completed = Array.isArray(order.payments) && order.payments.some((p:any) => p.status === 'COMPLETED')
+                const estimate = order.estimate
+                const rawTotal = Number(estimate?.total ?? 0)
+                const total = Number.isFinite(rawTotal) && rawTotal > 0
+                  ? rawTotal
+                  : (() => {
+                      const items = estimate?.itemsJson?.items || estimate?.itemsJson?.parts || []
+                      if (!Array.isArray(items)) return 0
+                      return items.reduce((sum:number, it:any) => sum + Number(it.total ?? it.amount ?? it.price ?? it.unitPrice ?? 0), 0)
+                    })()
+                return (
+                  <div className="text-xs text-gray-500 mt-1">
+                    {estimate ? `Estimate: ${total} ${estimate.currency ?? ''}${estimate.approved ? ' (approved)' : ''}` : 'Estimate: not ready'}
+                    {completed ? ' | Paid' : ''}
+                  </div>
+                )
+              })()}
+
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <h3 className="text-xl font-semibold mb-2">Order #{order.id}</h3>
@@ -188,9 +209,29 @@ function OrderList() {
                 </div>
               )}
               <div className="mt-4 pt-4 border-t border-gray-200">
-                <button onClick={() => navigate(`/orders/${order.id}`)} className="text-primary-600 hover:text-primary-700 font-medium">
-                  View details
-                </button>
+                <div className="flex gap-3 items-center">
+                  <button onClick={() => navigate(`/orders/${order.id}`)} className="text-primary-600 hover:text-primary-700 font-medium">
+                    View details
+                  </button>
+                  {(() => {
+                    const completed = Array.isArray(order.payments) && order.payments.some((p:any) => p.status === 'COMPLETED')
+                    const estimate = order.estimate
+                    const rawTotal = Number(estimate?.total ?? 0)
+                    const total = Number.isFinite(rawTotal) && rawTotal > 0
+                      ? rawTotal
+                      : (() => {
+                          const items = estimate?.itemsJson?.items || estimate?.itemsJson?.parts || []
+                          if (!Array.isArray(items)) return 0
+                          return items.reduce((sum:number, it:any) => sum + Number(it.total ?? it.amount ?? it.price ?? it.unitPrice ?? 0), 0)
+                        })()
+                    if (!estimate || !estimate.approved || completed || total <= 0) return null
+                    return (
+                      <button onClick={() => navigate(`/payments/${order.id}`)} className="text-primary-600 hover:text-primary-700 font-medium">
+                        Pay
+                      </button>
+                    )
+                  })()}
+                </div>
               </div>
             </div>
           ))}

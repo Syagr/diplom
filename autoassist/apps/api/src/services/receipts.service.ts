@@ -2,6 +2,8 @@
 import prisma from '@/utils/prisma.js';
 import { minio, ATTACH_BUCKET, ensureBucket, buildObjectKey } from '@/libs/minio.js';
 import { canonicalJson, sha256Hex } from '@/utils/hash.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 // Use dynamic imports to avoid compile-time requirement of type declarations
 
 type GenerateOptions = {
@@ -20,7 +22,7 @@ function getExplorerTxBaseUrl(): string {
 export async function generateReceiptForPayment(paymentId: number, opts: GenerateOptions = {}) {
   // lazy-load heavy libs
   const pdfLib: any = await import('pdf-lib');
-  const { PDFDocument, StandardFonts, rgb } = pdfLib;
+  const { PDFDocument, rgb } = pdfLib;
   const QRCode: any = (await import('qrcode')).default ?? (await import('qrcode'));
   const payment = await prisma.payment.findUnique({
     where: { id: Number(paymentId) },
@@ -29,6 +31,9 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
         include: {
           client: true,
           vehicle: true,
+          estimate: true,
+          serviceCenter: true,
+          locations: true,
         },
       },
     },
@@ -38,6 +43,14 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
   const order = payment.order;
   const client = order.client || null;
   const vehicle = order.vehicle || null;
+  const estimate: any = (order as any).estimate || null;
+  const estimateMeta = (estimate?.itemsJson as any)?.meta || (estimate?.laborJson as any)?.meta || {};
+  const pickup = Array.isArray(order.locations)
+    ? order.locations.find((loc: any) => loc.kind === 'pickup')
+    : null;
+  const estimateTotal = estimate?.total != null ? Number(estimate.total) : null;
+  const estimateCurrency = estimate?.currency ?? (payment as any).currency ?? 'UAH';
+  const estimateProfile = estimateMeta?.profile ?? null;
 
   // Prepare QR (tx or fallback)
   const explorerBase = opts.explorerTxBaseUrl || getExplorerTxBaseUrl();
@@ -52,8 +65,16 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
   const page = pdf.addPage([595.28, 841.89]); // A4 portrait
   const { width, height } = page.getSize();
   const margin = 40;
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const fontDir = process.env.RECEIPT_FONT_DIR || path.resolve(process.cwd(), 'assets');
+  const fontPath = process.env.RECEIPT_FONT_PATH || path.join(fontDir, 'NotoSans-Regular.ttf');
+  const fontBoldPath =
+    process.env.RECEIPT_FONT_BOLD_PATH || path.join(fontDir, 'NotoSans-Bold.ttf');
+  const [fontBytes, fontBoldBytes] = await Promise.all([
+    fs.readFile(fontPath),
+    fs.readFile(fontBoldPath),
+  ]);
+  const font = await pdf.embedFont(fontBytes, { subset: true });
+  const fontBold = await pdf.embedFont(fontBoldBytes, { subset: true });
 
   // Header
   const title = 'Payment Receipt';
@@ -68,24 +89,99 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
   const issuer = opts.issuerName || process.env.RECEIPT_ISSUER || 'AutoAssist Web3';
   page.drawText(issuer, { x: margin, y: height - margin - 36, size: 12, font });
 
-  // Details
-  const lines: string[] = [
-    `Receipt ID: PAY-${payment.id}`,
-    `Order ID: ${order.id}`,
-    `Date: ${new Date(payment.completedAt ?? payment.createdAt).toLocaleString()}`,
-    `Amount: ${Number(payment.amount).toFixed(2)} ${((payment as any).currency ?? 'UAH')}`,
-    `Method: ${payment.method}`,
-    `Provider: ${payment.provider ?? 'n/a'}`,
-    `Provider ID: ${payment.providerId ?? 'n/a'}`,
-    `Tx Hash: ${payment.txHash ?? 'n/a'}`,
-    client ? `Client: ${client.name} (${client.email ?? client.phone ?? 'n/a'})` : 'Client: n/a',
-    vehicle ? `Vehicle: ${vehicle.plate} ${vehicle.make ?? ''} ${vehicle.model ?? ''}`.trim() : 'Vehicle: n/a',
-  ];
-
+  const labelSize = 10;
+  const valueSize = 11;
+  const sectionSize = 12;
+  const lineGap = 14;
   let y = height - margin - 70;
-  for (const line of lines) {
-    page.drawText(line, { x: margin, y, size: 12, font });
-    y -= 18;
+
+  const drawSection = (titleText: string) => {
+    page.drawText(titleText, { x: margin, y, size: sectionSize, font: fontBold });
+    y -= lineGap;
+  };
+  const drawLabel = (label: string, value: string, x: number) => {
+    page.drawText(label, { x, y, size: labelSize, font, color: rgb(0.4, 0.4, 0.4) });
+    page.drawText(value, { x: x + 90, y, size: valueSize, font });
+    y -= lineGap;
+  };
+
+  drawSection('Payment');
+  drawLabel('Receipt', `PAY-${payment.id}`, margin);
+  drawLabel('Date', new Date(payment.completedAt ?? payment.createdAt).toLocaleString(), margin);
+  drawLabel('Amount', `${Number(payment.amount).toFixed(2)} ${((payment as any).currency ?? 'UAH')}`, margin);
+  drawLabel('Method', String(payment.method || 'n/a'), margin);
+  drawLabel('Provider', String(payment.provider || 'n/a'), margin);
+  if (payment.providerId) drawLabel('Provider ID', String(payment.providerId), margin);
+  drawLabel('Tx Hash', String(payment.txHash || 'n/a'), margin);
+  y -= 6;
+
+  drawSection('Order');
+  drawLabel('Order ID', String(order.id), margin);
+  drawLabel('Status', String(order.status || 'n/a'), margin);
+  drawLabel('Category', String(order.category || 'n/a'), margin);
+  drawLabel('Priority', String(order.priority || 'n/a'), margin);
+  if (order.description) drawLabel('Issue', String(order.description), margin);
+  if (pickup) drawLabel('Pickup', String(pickup.address ?? `${pickup.lat}, ${pickup.lng}`), margin);
+  if (order.serviceCenter?.name) {
+    drawLabel('Service', String(order.serviceCenter.name), margin);
+  }
+  y -= 6;
+
+  drawSection('Client & Vehicle');
+  drawLabel('Client', client ? `${client.name} (${client.email ?? client.phone ?? 'n/a'})` : 'n/a', margin);
+  drawLabel('Vehicle', vehicle ? `${vehicle.plate} ${vehicle.make ?? ''} ${vehicle.model ?? ''}`.trim() : 'n/a', margin);
+  if (vehicle?.vin) drawLabel('VIN', String(vehicle.vin), margin);
+  y -= 6;
+
+  drawSection('Estimate');
+  if (estimate) {
+    drawLabel('Approved', estimate.approved ? 'Yes' : 'Pending', margin);
+    drawLabel('Total', `${estimateTotal != null ? estimateTotal.toFixed(2) : 'n/a'} ${estimateCurrency}`, margin);
+    if (estimateProfile) drawLabel('Profile', String(estimateProfile), margin);
+    if (estimateMeta?.summary) drawLabel('Summary', String(estimateMeta.summary), margin);
+    if (estimateMeta?.coeffParts) drawLabel('Parts coeff', Number(estimateMeta.coeffParts).toFixed(2), margin);
+    if (estimateMeta?.coeffLabor) drawLabel('Labor coeff', Number(estimateMeta.coeffLabor).toFixed(2), margin);
+  } else {
+    drawLabel('Status', 'No estimate', margin);
+  }
+
+  const items = Array.isArray(estimate?.itemsJson?.items)
+    ? estimate.itemsJson.items
+    : Array.isArray(estimate?.itemsJson?.parts)
+      ? estimate.itemsJson.parts
+      : [];
+  const laborLines = Array.isArray(estimate?.laborJson?.lines)
+    ? estimate.laborJson.lines
+    : Array.isArray(estimate?.laborJson?.tasks)
+      ? estimate.laborJson.tasks
+      : [];
+
+  if (items.length || laborLines.length) {
+    y -= 4;
+    page.drawText('Breakdown:', { x: margin, y, size: labelSize, font: fontBold });
+    y -= lineGap;
+    const maxLines = 6;
+    const itemLines = items.slice(0, maxLines).map((it: any) => {
+      const name = it.name || it.title || it.partNo || 'Item';
+      const qty = it.qty ?? it.quantity ?? 1;
+      const price = it.total ?? it.amount ?? it.price ?? it.unitPrice ?? 0;
+      return `- ${name} x${qty} = ${Number(price).toFixed(2)}`;
+    });
+    for (const line of itemLines) {
+      page.drawText(line, { x: margin + 10, y, size: labelSize, font });
+      y -= lineGap;
+    }
+    const laborLinesOut = laborLines.slice(0, maxLines).map((it: any) => {
+      const name = it.name || 'Labor';
+      const hours = it.hours ?? 0;
+      const rate = it.rate ?? 0;
+      const totalVal = it.total ?? Number(hours) * Number(rate);
+      return `- ${name}: ${hours}h x ${rate} = ${Number(totalVal).toFixed(2)}`;
+    });
+    for (const line of laborLinesOut) {
+      page.drawText(line, { x: margin + 10, y, size: labelSize, font });
+      y -= lineGap;
+    }
   }
 
   // QR in the corner
@@ -170,6 +266,23 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
       details: { paymentId: payment.id, attachmentId: attachment.id },
     },
   });
+  try {
+    await prisma.auditEvent.create({
+      data: {
+        type: 'receipt:generated',
+        payload: {
+          paymentId: payment.id,
+          orderId: order.id,
+          attachmentId: attachment.id,
+          amount: Number(payment.amount),
+          currency: (payment as any).currency ?? 'UAH',
+        },
+      },
+    });
+  } catch (_e) {
+    // Avoid failing receipt flow if audit table is missing or unavailable.
+    void 0;
+  }
 
   return { attachmentId: attachment.id, urlPath, receiptHash };
 }

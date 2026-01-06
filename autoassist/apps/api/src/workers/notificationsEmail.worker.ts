@@ -14,9 +14,11 @@ const connection = new (IORedis as any)({
   port: REDIS_PORT,
   password: REDIS_PASSWORD,
   ...(REDIS_TLS ? { tls: { rejectUnauthorized: process.env.REDIS_TLS_REJECT_UNAUTHORIZED !== '0' } } : {}),
-  maxRetriesPerRequest: 3,
+  maxRetriesPerRequest: null,
   enableReadyCheck: true,
 });
+// BullMQ requires maxRetriesPerRequest = null for blocking commands.
+try { (connection as any).options.maxRetriesPerRequest = null; } catch {}
 
 type NotificationJob = {
   type: 'payment_completed' | 'estimate_locked' | 'order_closed';

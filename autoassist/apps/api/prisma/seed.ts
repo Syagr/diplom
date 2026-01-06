@@ -1,5 +1,7 @@
 import { PrismaClient } from '@prisma/client';
+import type { OrderPriority } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { autoCalculateEstimate, type ProfileCode } from '../src/services/estimates.service.js';
 
 const prisma = new PrismaClient();
 
@@ -118,6 +120,35 @@ async function main() {
       create: { name: 'AutoAssist Left Bank', lat: 50.4509, lng: 30.63, city: 'Kyiv', address: 'Left Bank Ave 10' },
     }),
   ]);
+
+  const extraCenters = [
+    { id: 3, name: 'AutoAssist Podil', lat: 50.4726, lng: 30.5131, city: 'Kyiv', address: 'Podil 12' },
+    { id: 4, name: 'AutoAssist Obolon', lat: 50.5116, lng: 30.4982, city: 'Kyiv', address: 'Obolon Ave 7' },
+    { id: 5, name: 'AutoAssist Pozniaky', lat: 50.4125, lng: 30.6342, city: 'Kyiv', address: 'Pozniaky 18' },
+    { id: 6, name: 'AutoAssist Teremky', lat: 50.3659, lng: 30.4473, city: 'Kyiv', address: 'Teremky 3' },
+    { id: 7, name: 'AutoAssist Lukianivka', lat: 50.4549, lng: 30.4886, city: 'Kyiv', address: 'Lukianivka 5' },
+    { id: 8, name: 'AutoAssist Darnytsia', lat: 50.4247, lng: 30.6692, city: 'Kyiv', address: 'Darnytsia 21' },
+    { id: 9, name: 'AutoAssist Holosiiv', lat: 50.3836, lng: 30.4912, city: 'Kyiv', address: 'Holosiiv 9' },
+    { id: 10, name: 'AutoAssist Solomianka', lat: 50.4305, lng: 30.4746, city: 'Kyiv', address: 'Solomianka 11' },
+    { id: 11, name: 'AutoAssist Nyvky', lat: 50.4732, lng: 30.3903, city: 'Kyiv', address: 'Nyvky 4' },
+    { id: 12, name: 'AutoAssist Sviatoshyn', lat: 50.4567, lng: 30.3708, city: 'Kyiv', address: 'Sviatoshyn 2' },
+    { id: 13, name: 'AutoAssist Zhuliany', lat: 50.4019, lng: 30.4511, city: 'Kyiv', address: 'Zhuliany 6' },
+    { id: 14, name: 'AutoAssist Pechersk', lat: 50.4208, lng: 30.5212, city: 'Kyiv', address: 'Pechersk 17' },
+    { id: 15, name: 'AutoAssist Livoberezhna', lat: 50.4516, lng: 30.5945, city: 'Kyiv', address: 'Livoberezhna 13' },
+    { id: 16, name: 'AutoAssist Osokorky', lat: 50.3951, lng: 30.6254, city: 'Kyiv', address: 'Osokorky 9' },
+    { id: 17, name: 'AutoAssist Akademmistechko', lat: 50.4642, lng: 30.3572, city: 'Kyiv', address: 'Akademmistechko 1' },
+    { id: 18, name: 'AutoAssist Vidradnyi', lat: 50.4224, lng: 30.4319, city: 'Kyiv', address: 'Vidradnyi 8' },
+  ];
+
+  await Promise.all(
+    extraCenters.map((c) =>
+      prisma.serviceCenter.upsert({
+        where: { id: c.id },
+        update: c,
+        create: c,
+      })
+    )
+  );
 
   // ---------------------------
   // Client (unique by phone)
@@ -314,6 +345,167 @@ async function main() {
       performedBy: 'AutoAssist+ Service',
     },
   });
+
+
+  // ---------------------------
+  // Demo orders for pasha.syagro@gmail.com
+  // ---------------------------
+  const pashaEmail = 'pasha.syagro@gmail.com';
+  const pashaPhone = '+380986034232';
+  const pashaHash = await bcrypt.hash('pasha123', 12);
+  const phoneOwner = await prisma.user.findUnique({ where: { phone: pashaPhone }, select: { email: true } });
+  const safePhone = phoneOwner && phoneOwner.email && phoneOwner.email != pashaEmail ? null : pashaPhone;
+
+  const pashaClient = await prisma.client.upsert({
+    where: { phone: pashaPhone },
+    update: { name: 'Pasha Syagro', email: pashaEmail },
+    create: { name: 'Pasha Syagro', phone: pashaPhone, email: pashaEmail, loyaltyPoints: 80 },
+  });
+
+  await prisma.user.upsert({
+    where: { email: pashaEmail },
+    update: { clientId: pashaClient.id, name: 'Pasha Syagro', ...(safePhone ? { phone: safePhone } : {}) },
+    create: {
+      clientId: pashaClient.id,
+      name: 'Pasha Syagro',
+      email: pashaEmail,
+      phone: safePhone ?? undefined,
+      passwordHash: pashaHash,
+      role: 'customer',
+    },
+  });
+
+  const pashaVehicles = [
+    { plate: 'AA4962HB', make: 'MITSUBISHI', model: 'LANCER', year: 2008, vin: 'LWX5495654KJ' },
+    { plate: 'AA7777AA', make: 'BMW', model: 'E60', year: 2009, vin: 'WBAEV53442KM12345' },
+    { plate: 'KA1234KT', make: 'Toyota', model: 'RAV4', year: 2016, vin: 'JTMBFREV8HD123456' },
+    { plate: 'KA4321AB', make: 'Skoda', model: 'Octavia', year: 2014, vin: 'TMBJK7NE1E0012345' },
+  ];
+
+  const vehicles = await Promise.all(
+    pashaVehicles.map((v) =>
+      prisma.vehicle.upsert({
+        where: { plate: v.plate },
+        update: { clientId: pashaClient.id, make: v.make, model: v.model, year: v.year, vin: v.vin },
+        create: { clientId: pashaClient.id, plate: v.plate, make: v.make, model: v.model, year: v.year, vin: v.vin },
+      })
+    )
+  );
+
+  const pashaOrders: Array<{
+    seedKey: string;
+    vehicleId: number;
+    category: string;
+    priority: OrderPriority;
+    description: string;
+    pickup: { lat: number; lng: number; address: string };
+    profile: ProfileCode;
+    urgent: boolean;
+    night: boolean;
+    suv: boolean;
+  }> = [
+    {
+      seedKey: 'pasha-order-1',
+      vehicleId: vehicles[0].id,
+      category: 'electrical',
+      priority: 'normal',
+      description: 'Left headlight short circuit, intermittent.',
+      pickup: { lat: 50.5012, lng: 30.5813, address: 'Kyiv, Onore de Balzaka 8-b' },
+      profile: 'STANDARD',
+      urgent: false,
+      night: false,
+      suv: false,
+    },
+    {
+      seedKey: 'pasha-order-2',
+      vehicleId: vehicles[1].id,
+      category: 'engine',
+      priority: 'high',
+      description: 'Knocking noise on cold start, needs diagnostics.',
+      pickup: { lat: 50.4506, lng: 30.5223, address: 'Kyiv, Khreshchatyk 5' },
+      profile: 'PREMIUM',
+      urgent: true,
+      night: false,
+      suv: false,
+    },
+    {
+      seedKey: 'pasha-order-3',
+      vehicleId: vehicles[2].id,
+      category: 'suspension',
+      priority: 'urgent',
+      description: 'Suspension vibration and steering pull.',
+      pickup: { lat: 50.4126, lng: 30.6233, address: 'Kyiv, Pozniaky 20' },
+      profile: 'PREMIUM',
+      urgent: true,
+      night: true,
+      suv: true,
+    },
+    {
+      seedKey: 'pasha-order-4',
+      vehicleId: vehicles[3].id,
+      category: 'transmission',
+      priority: 'normal',
+      description: 'Delayed gear shift, needs inspection.',
+      pickup: { lat: 50.4632, lng: 30.4891, address: 'Kyiv, Lukianivka 7' },
+      profile: 'ECONOMY',
+      urgent: false,
+      night: false,
+      suv: false,
+    },
+    {
+      seedKey: 'pasha-order-5',
+      vehicleId: vehicles[1].id,
+      category: 'engine',
+      priority: 'high',
+      description: 'Oil leak and smoke under load.',
+      pickup: { lat: 50.4312, lng: 30.5219, address: 'Kyiv, Pechersk 12' },
+      profile: 'STANDARD',
+      urgent: true,
+      night: false,
+      suv: false,
+    },
+    {
+      seedKey: 'pasha-order-6',
+      vehicleId: vehicles[2].id,
+      category: 'electrical',
+      priority: 'normal',
+      description: 'Battery drain overnight, diagnose circuits.',
+      pickup: { lat: 50.4078, lng: 30.6125, address: 'Kyiv, Osokorky 5' },
+      profile: 'PREMIUM',
+      urgent: false,
+      night: true,
+      suv: true,
+    },
+  ];
+
+  for (const o of pashaOrders) {
+    const existing = await prisma.order.findUnique({ where: { seedKey: o.seedKey } });
+    if (existing) continue;
+    const created = await prisma.order.create({
+      data: {
+        seedKey: o.seedKey,
+        clientId: pashaClient.id,
+        vehicleId: o.vehicleId,
+        category: o.category,
+        description: o.description,
+        priority: o.priority as OrderPriority,
+        channel: 'web',
+        locations: {
+          create: [{ kind: 'pickup', lat: o.pickup.lat, lng: o.pickup.lng, address: o.pickup.address }],
+        },
+        timeline: {
+          create: [{ event: 'order_created', details: { source: 'seed', owner: pashaEmail } }],
+        },
+      },
+    });
+    await autoCalculateEstimate({
+      orderId: created.id,
+      profile: o.profile as ProfileCode,
+      urgent: o.urgent,
+      night: o.night,
+      suv: o.suv,
+    });
+  }
 
   console.log('✅ Seed completed.');
   console.log(`📋 Order ID: ${order.id}`);

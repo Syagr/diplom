@@ -16,6 +16,30 @@ function normalizeError(e: any, fallback: string) {
   return String(msg)
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  ORDER_CREATED: 'Order created',
+  ORDER_UPDATED: 'Order updated',
+  PAYMENT_CONFIRMED: 'Payment confirmed',
+  PAYMENT_FAILED: 'Payment failed',
+  BROADCAST: 'Broadcast',
+  SYSTEM_ALERT: 'System alert',
+}
+
+function formatType(type?: string) {
+  if (!type) return 'Notification'
+  if (TYPE_LABELS[type]) return TYPE_LABELS[type]
+  return type.replace(/_/g, ' ').toLowerCase().replace(/^\w/, (c) => c.toUpperCase())
+}
+
+function formatDate(value?: string) {
+  if (!value) return '-'
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return value
+  }
+}
+
 export default function NotificationsPage() {
   const [items, setItems] = useState<NotificationItem[]>([])
   const [unread, setUnread] = useState(0)
@@ -63,7 +87,9 @@ export default function NotificationsPage() {
               type: payload?.type || 'IN_APP',
               title: payload?.title || payload?.subject || 'Notification',
               body: payload?.body || payload?.message || '',
-              data: payload?.data || null,
+              priority: payload?.priority,
+              order: payload?.order || null,
+              action: payload?.action || null,
               createdAt: new Date().toISOString(),
               readAt: null,
             },
@@ -161,12 +187,18 @@ export default function NotificationsPage() {
             <li key={n.id} className={`p-3 rounded border ${n.readAt ? 'bg-white' : 'bg-yellow-50'}`}>
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="font-medium">{n.title || n.type}</div>
+                  <div className="font-medium">{n.title || formatType(n.type)}</div>
                   {n.body && <div className="text-sm text-gray-700 mt-0.5">{n.body}</div>}
-                  {n.data && (
-                    <pre className="text-xs text-gray-500 mt-1 max-h-28 overflow-auto">
-                      {JSON.stringify(n.data, null, 2)}
-                    </pre>
+                  <div className="text-xs text-gray-500 mt-1">{formatDate(n.createdAt)}</div>
+                  {n.order?.id && (
+                    <div className="text-xs text-gray-600 mt-1">
+                      Order #{n.order.id}{n.order.status ? ` · ${n.order.status}` : ''}
+                    </div>
+                  )}
+                  {n.action?.url && (
+                    <a className="text-xs text-primary-600 hover:underline mt-1 inline-block" href={n.action.url}>
+                      {n.action.label || 'Open'}
+                    </a>
                   )}
                 </div>
                 {!n.readAt && (

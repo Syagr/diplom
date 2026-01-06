@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { authenticate } from '../middleware/auth.middleware.js';
 import estimateService from '../services/estimate.service.new';
 import { validate } from '../utils/validate.js';
+import prisma from '@/utils/prisma.js';
 import {
   CreateEstimateBody,
   EstimateIdParam,              // expects { id: number }
@@ -17,6 +18,10 @@ const router = Router();
 type AuthUser = { id: number; role?: 'admin' | 'manager' | 'client' | string };
 const getAuth = (req: Request) => (req as any).user as AuthUser | undefined;
 const isStaff = (u?: AuthUser) => !!u && ['admin','manager'].includes(String(u.role));
+const getClientId = async (userId: number) => {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { clientId: true } });
+  return user?.clientId ?? null;
+};
 
 // Усі ендпоїнти захищені
 router.use(authenticate);
@@ -39,7 +44,8 @@ router.get('/by-order/:orderId', validate(OrderIdParam, 'params'), async (req: R
     }
 
     // Видимість: клієнт свого замовлення або персонал
-    if (!isStaff(user) && estimate.order?.clientId !== Number(user.id)) {
+    const clientId = await getClientId(user.id);
+    if (!isStaff(user) && estimate.order?.clientId !== clientId) {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Немає доступу' } });
     }
 
@@ -149,16 +155,14 @@ router.post('/:id/approve', validate(EstimateIdParam, 'params'), async (req: Req
     const record = await estimateService.getEstimateById(eid);
     if (!record) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Оцінку не знайдено' } });
 
-    const isOwner = record.order?.clientId === Number(user.id);
+    const clientId = await getClientId(user.id);
+    const isOwner = record.order?.clientId === clientId;
     if (!isOwner && !isStaff(user)) {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Немає доступу' } });
     }
 
-    if (record.status === 'APPROVED') {
+    if (record.approved) {
       return res.status(409).json({ error: { code: 'ALREADY_APPROVED', message: 'Оцінку вже затверджено' } });
-    }
-    if (record.status === 'REJECTED') {
-      return res.status(409).json({ error: { code: 'ALREADY_REJECTED', message: 'Оцінку вже відхилено' } });
     }
 
     const estimate = await estimateService.approveEstimate(eid, user.id);
@@ -183,15 +187,13 @@ router.post('/:id/reject', validate(EstimateIdParam, 'params'), validate(Decisio
     const record = await estimateService.getEstimateById(eid);
     if (!record) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Оцінку не знайдено' } });
 
-    const isOwner = record.order?.clientId === Number(user.id);
+    const clientId = await getClientId(user.id);
+    const isOwner = record.order?.clientId === clientId;
     if (!isOwner && !isStaff(user)) {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Немає доступу' } });
     }
 
-    if (record.status === 'REJECTED') {
-      return res.status(409).json({ error: { code: 'ALREADY_REJECTED', message: 'Оцінку вже відхилено' } });
-    }
-    if (record.status === 'APPROVED') {
+    if (record.approved) {
       return res.status(409).json({ error: { code: 'ALREADY_APPROVED', message: 'Оцінку вже затверджено' } });
     }
 

@@ -27,6 +27,7 @@ RUN pnpm install --frozen-lockfile
 
 # Copy sources
 COPY src ./src
+COPY assets ./assets
 COPY prisma ./prisma
 
 # Generate Prisma client
@@ -58,6 +59,7 @@ COPY --from=builder --chown=autoassist:nodejs /app/dist ./dist
 COPY --from=builder --chown=autoassist:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=autoassist:nodejs /app/package.json ./package.json
 COPY --from=builder --chown=autoassist:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=autoassist:nodejs /app/assets ./assets
 
 USER autoassist
 

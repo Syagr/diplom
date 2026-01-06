@@ -33,7 +33,7 @@ import testRoutes from './routes/test.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
 import receiptsRoutes from './routes/receipts.routes.js';
 import meRoutes from './routes/me.routes.js';
-// Removed: authRoutes, ordersRoutes, notificationsRoutes, walletRoutes, estimatesRoutes, adminRoutes
+import adminRoutes from './routes/admin.routes.js';
 import { authenticate } from './middleware/auth.middleware.js';
 
 import { ZodError } from 'zod';
@@ -249,7 +249,7 @@ if (process.env.NODE_ENV === 'test') {
 app.use('/api/notifications', authenticate, notificationsRoutes);
 // app.use('/api/wallet', walletRoutes);
 // app.use('/api/estimates', authenticate, estimatesRoutes);
-// app.use('/api/admin', authenticate, adminRoutes);
+app.use('/api/admin', authenticate, adminRoutes);
 
 // Admin test event
 app.post('/api/admin/test-event', authenticate, (req, res) => {

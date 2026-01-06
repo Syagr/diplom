@@ -13,23 +13,84 @@ export type CalcInput = {
   suv?: boolean;
 };
 
-// Simple base matrix by order.category (fallback generic)
-const BASE_PARTS_BY_CATEGORY: Record<string, number> = {
-  engine: 2000,
-  transmission: 1800,
-  electrical: 900,
-  suspension: 1100,
-  body: 1500,
-  generic: 1000,
+type CategoryTemplate = {
+  summary: string;
+  parts: { name: string; qty: number; unit: string; basePrice: number }[];
+  labor: { name: string; hours: number }[];
+  recommendations: string[];
 };
 
-const BASE_LABOR_BY_CATEGORY: Record<string, number> = {
-  engine: 8,
-  transmission: 7,
-  electrical: 3,
-  suspension: 4,
-  body: 5,
-  generic: 4,
+const CATEGORY_TEMPLATES: Record<string, CategoryTemplate> = {
+  engine: {
+    summary: 'Engine diagnostics and repair',
+    parts: [
+      { name: 'Engine oil', qty: 4, unit: 'liter', basePrice: 140 },
+      { name: 'Oil filter', qty: 1, unit: 'pcs', basePrice: 220 },
+      { name: 'Spark plugs', qty: 4, unit: 'pcs', basePrice: 180 },
+    ],
+    labor: [
+      { name: 'Engine diagnostics', hours: 2 },
+      { name: 'Repair work', hours: 6 },
+    ],
+    recommendations: ['Check compression', 'Inspect belts and hoses'],
+  },
+  transmission: {
+    summary: 'Transmission check and service',
+    parts: [
+      { name: 'Transmission fluid', qty: 6, unit: 'liter', basePrice: 160 },
+      { name: 'Transmission filter', qty: 1, unit: 'pcs', basePrice: 260 },
+    ],
+    labor: [
+      { name: 'Transmission diagnostics', hours: 2 },
+      { name: 'Service and adjustments', hours: 5 },
+    ],
+    recommendations: ['Inspect clutch/torque converter', 'Check seals'],
+  },
+  electrical: {
+    summary: 'Electrical diagnostics and wiring',
+    parts: [
+      { name: 'Wiring kit', qty: 1, unit: 'set', basePrice: 400 },
+      { name: 'Fuse set', qty: 1, unit: 'set', basePrice: 160 },
+    ],
+    labor: [
+      { name: 'Electrical diagnostics', hours: 2 },
+      { name: 'Wiring repair', hours: 2 },
+    ],
+    recommendations: ['Test battery and alternator', 'Check grounding points'],
+  },
+  suspension: {
+    summary: 'Suspension inspection and repair',
+    parts: [
+      { name: 'Shock absorber', qty: 2, unit: 'pcs', basePrice: 520 },
+      { name: 'Control arm bushing', qty: 2, unit: 'pcs', basePrice: 180 },
+    ],
+    labor: [
+      { name: 'Suspension diagnostics', hours: 2 },
+      { name: 'Replacement work', hours: 3 },
+    ],
+    recommendations: ['Check wheel alignment', 'Inspect ball joints'],
+  },
+  brakes: {
+    summary: 'Brake system maintenance',
+    parts: [
+      { name: 'Brake pads', qty: 1, unit: 'set', basePrice: 650 },
+      { name: 'Brake fluid', qty: 1, unit: 'liter', basePrice: 220 },
+    ],
+    labor: [
+      { name: 'Brake inspection', hours: 1 },
+      { name: 'Pad replacement', hours: 2 },
+    ],
+    recommendations: ['Check brake discs', 'Test ABS system'],
+  },
+  other: {
+    summary: 'General diagnostics and service',
+    parts: [{ name: 'Consumables', qty: 1, unit: 'set', basePrice: 500 }],
+    labor: [
+      { name: 'General diagnostics', hours: 2 },
+      { name: 'Repair work', hours: 2 },
+    ],
+    recommendations: ['Detailed inspection required'],
+  },
 };
 
 // Hourly rate baseline (fallback)
@@ -58,9 +119,10 @@ export async function autoCalculateEstimate({ orderId, profile, night, urgent, s
   // Try to load admin-defined profile from DB
   const dbProfile = await prisma.calcProfile.findFirst({ where: { code: profile, active: true } });
 
-  const cat = (order.category || 'generic').toLowerCase();
-  const baseParts = BASE_PARTS_BY_CATEGORY[cat] ?? BASE_PARTS_BY_CATEGORY['generic'];
-  const baseLaborHours = BASE_LABOR_BY_CATEGORY[cat] ?? BASE_LABOR_BY_CATEGORY['generic'];
+  const cat = (order.category || 'other').toLowerCase();
+  const template = CATEGORY_TEMPLATES[cat] ?? CATEGORY_TEMPLATES.other;
+  const baseParts = template.parts.reduce((acc, p) => acc + p.basePrice * p.qty, 0);
+  const baseLaborHours = template.labor.reduce((acc, l) => acc + l.hours, 0);
 
   // Build coefficients
   const basePartsCoeff = dbProfile?.partsCoeff ?? PROFILE_COEFF[profile];
@@ -73,22 +135,61 @@ export async function autoCalculateEstimate({ orderId, profile, night, urgent, s
   const coeffLabor = baseLaborCoeff * nightK * urgentK * suvK;
   const laborRate = dbProfile?.laborRate ?? LABOR_RATE_FALLBACK;
 
-  const partsCost = round2(baseParts * coeffParts);
-  const laborHours = Math.max(1, Math.round(baseLaborHours * (suv ? 1.1 : 1.0))); // example tweak
-  const laborCost = round2(laborHours * laborRate * coeffLabor);
+  const partsLines = template.parts.map((p) => {
+    const unitPrice = round2(p.basePrice * coeffParts);
+    return {
+      type: 'PART',
+      name: p.name,
+      qty: p.qty,
+      unit: p.unit,
+      unitPrice,
+      total: round2(unitPrice * p.qty),
+    };
+  });
+  const partsCost = round2(partsLines.reduce((acc, p) => acc + p.total, 0));
+  const hoursMultiplier = suv ? 1.1 : 1.0;
+  const laborRateWithCoeff = round2(laborRate * coeffLabor);
+  const laborLines = template.labor.map((l) => {
+    const hours = round2(l.hours * hoursMultiplier);
+    return {
+      type: 'LABOR',
+      name: l.name,
+      hours,
+      rate: laborRateWithCoeff,
+      total: round2(hours * laborRateWithCoeff),
+    };
+  });
+  const laborHours = round2(laborLines.reduce((acc, l) => acc + l.hours, 0));
+  const laborCost = round2(laborLines.reduce((acc, l) => acc + l.total, 0));
   const total = round2(partsCost + laborCost);
 
   const itemsJson = {
-    items: [
-      { type: 'PART', name: 'Parts & materials', qty: 1, unit: 'set', unitPrice: partsCost, total: partsCost },
-    ],
-    meta: { profile, coeffParts, coeffLabor, baseParts, cat, dbProfileId: dbProfile?.id ?? null },
+    items: partsLines,
+    meta: {
+      profile,
+      coeffParts,
+      coeffLabor,
+      baseParts,
+      baseLaborHours,
+      laborRate,
+      cat,
+      summary: template.summary,
+      recommendations: template.recommendations,
+      flags: { night: !!night, urgent: !!urgent, suv: !!suv },
+      dbProfileId: dbProfile?.id ?? null,
+    },
   };
   const laborJson = {
-    lines: [
-      { type: 'LABOR', name: 'Labor hours', hours: laborHours, rate: laborRate * coeffLabor, total: laborCost },
-    ],
-    meta: { profile, laborHours, baseLaborHours, coeffLabor, laborRate, dbProfileId: dbProfile?.id ?? null },
+    lines: laborLines,
+    meta: {
+      profile,
+      laborHours,
+      baseLaborHours,
+      coeffLabor,
+      laborRate,
+      laborCost,
+      dbProfileId: dbProfile?.id ?? null,
+    },
   };
 
   // Upsert estimate
@@ -97,6 +198,13 @@ export async function autoCalculateEstimate({ orderId, profile, night, urgent, s
     update: { itemsJson, laborJson, total, currency: 'UAH', approved: false, approvedAt: null },
     create: { orderId: order.id, itemsJson, laborJson, total, currency: 'UAH', validUntil: new Date(Date.now() + 7 * 86400000) },
   });
+
+  if (['NEW', 'TRIAGE'].includes(String(order.status))) {
+    await prisma.order.update({ where: { id: order.id }, data: { status: 'QUOTE' } });
+    await prisma.orderTimeline.create({
+      data: { orderId: order.id, event: 'Status changed to QUOTE', details: { reason: 'auto_estimate' } },
+    });
+  }
 
   await prisma.orderTimeline.create({
     data: {

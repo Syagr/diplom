@@ -1,6 +1,6 @@
 import prisma from '../utils/prisma.js';
 const p: any = prisma;
-import { minio, ATTACH_BUCKET, ensureBucket, buildObjectKey } from '../libs/minio.js';
+import { minio, ATTACH_BUCKET, ensureBucket, buildObjectKey, presignPut, presignGet } from '../libs/minio.js';
 import { previewsQ, cleanupQ } from '../queues/index.js';
 import { PresignUploadBody } from '../validators/attachments.schema.js';
 import { canReadOrder, canWriteAttachment } from '../utils/rbac.js';
@@ -27,6 +27,7 @@ function httpError(code: string, status = 400, message?: string) {
   return err;
 }
 
+
 function sanitizeFilename(name: string): string {
   // прибери шляхи, контрольні символи; обмеж довжину
   // eslint-disable-next-line no-control-regex
@@ -41,6 +42,27 @@ function pickAttachmentType(rawKind?: string, contentType?: string): { type: Att
   return { type: entry.type, validMime: valid };
 }
 
+async function resolveClientId(userId: number): Promise<number | null> {
+  if (!userId) return null;
+  const user = await p.user.findUnique({
+    where: { id: userId },
+    select: { clientId: true } as any,
+  });
+  return user?.clientId ?? null;
+}
+
+async function canReadOrderForUser(role: string, userId: number, orderClientId?: number | null) {
+  if (role !== 'customer') return canReadOrder(role as any, userId, orderClientId ?? undefined);
+  const clientId = await resolveClientId(userId);
+  return canReadOrder(role as any, clientId ?? 0, orderClientId ?? undefined);
+}
+
+async function canWriteAttachmentForUser(role: string, userId: number, orderClientId?: number | null) {
+  if (role !== 'customer') return canWriteAttachment(role as any, userId, orderClientId ?? undefined);
+  const clientId = await resolveClientId(userId);
+  return canWriteAttachment(role as any, clientId ?? 0, orderClientId ?? undefined);
+}
+
 // --- API ---
 
 export async function presignUpload(userId: number, role: string, body: PresignUploadBody) {
@@ -52,7 +74,8 @@ export async function presignUpload(userId: number, role: string, body: PresignU
   });
   if (!order) throw httpError('ORDER_NOT_FOUND', 404);
 
-  if (!canWriteAttachment(role as any, userId, order.clientId)) {
+  const canWrite = await canWriteAttachmentForUser(role, userId, order.clientId);
+  if (!canWrite) {
     throw httpError('FORBIDDEN', 403);
   }
 
@@ -79,11 +102,11 @@ export async function presignUpload(userId: number, role: string, body: PresignU
   });
   if (existing) {
     // вертаємо новий PUT на той самий ключ (для повторної спроби)
-    const putUrl = await minio.presignedPutObject(ATTACH_BUCKET, objectKey, UPLOAD_TTL_SEC);
+    const putUrl = await presignPut(ATTACH_BUCKET, objectKey, UPLOAD_TTL_SEC);
     return { id: existing.id, attachmentId: existing.id, putUrl, objectKey: existing.objectKey };
   }
 
-  const putUrl = await minio.presignedPutObject(ATTACH_BUCKET, objectKey, UPLOAD_TTL_SEC);
+  const putUrl = await presignPut(ATTACH_BUCKET, objectKey, UPLOAD_TTL_SEC);
 
   const attachment = await p.attachment.create({
     data: {
@@ -104,6 +127,73 @@ export async function presignUpload(userId: number, role: string, body: PresignU
   return { id: attachment.id, attachmentId: attachment.id, putUrl, objectKey: attachment.objectKey };
 }
 
+export async function uploadDirect(
+  userId: number,
+  role: string,
+  body: { orderId: number; kind?: string },
+  file: { originalname: string; mimetype: string; size: number; buffer: Buffer },
+) {
+  await ensureBucket();
+
+  const order = await p.order.findUnique({
+    where: { id: body.orderId },
+    select: { id: true, clientId: true } as any,
+  });
+  if (!order) throw httpError('ORDER_NOT_FOUND', 404);
+
+  const canWrite = await canWriteAttachmentForUser(role, userId, order.clientId);
+  if (!canWrite) {
+    throw httpError('FORBIDDEN', 403);
+  }
+
+  const fileName = sanitizeFilename(file.originalname || 'file');
+  const contentType = String(file.mimetype || 'application/octet-stream');
+  const size = Number(file.size ?? 0);
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_UPLOAD_BYTES) {
+    throw httpError('FILE_TOO_LARGE', 413, `Max ${MAX_UPLOAD_BYTES} bytes`);
+  }
+
+  const { type: attachmentType, validMime } = pickAttachmentType(body.kind as any, contentType);
+  if (contentType && !validMime) {
+    throw httpError('UNSUPPORTED_MEDIA_TYPE', 415, `Invalid content-type: ${contentType}`);
+  }
+
+  const objectKey = buildObjectKey(body.orderId, fileName);
+
+  const attachment = await p.attachment.create({
+    data: {
+      orderId: body.orderId,
+      type: attachmentType,
+      objectKey,
+      contentType,
+      size,
+      status: STATUS.PENDING,
+      meta: {},
+      createdBy: userId,
+      filename: fileName,
+      url: '',
+    },
+    select: { id: true, objectKey: true },
+  });
+
+  try {
+    await minio.putObject(ATTACH_BUCKET, objectKey, file.buffer, size, {
+      'Content-Type': contentType,
+    });
+  } catch {
+    await p.attachment.delete({ where: { id: attachment.id } }).catch(() => {});
+    throw httpError('UPLOAD_FAILED', 500, 'Failed to upload to storage');
+  }
+
+  await p.attachment.update({ where: { id: attachment.id }, data: { status: STATUS.READY } });
+
+  try {
+    await previewsQ.add('make-preview', { attachmentId: attachment.id }, { attempts: 3, removeOnComplete: 100, removeOnFail: 200 });
+  } catch { /* swallow */ }
+
+  return { id: attachment.id, attachmentId: attachment.id, objectKey };
+}
+
 export async function completeUpload(userId: number, role: string, attachmentId: number) {
   const att = await p.attachment.findUnique({
     where: { id: attachmentId },
@@ -111,7 +201,8 @@ export async function completeUpload(userId: number, role: string, attachmentId:
   });
   if (!att) throw httpError('ATTACHMENT_NOT_FOUND', 404);
 
-  if (!canWriteAttachment(role as any, userId, att.order?.clientId)) {
+  const canWrite = await canWriteAttachmentForUser(role, userId, att.order?.clientId);
+  if (!canWrite) {
     throw httpError('FORBIDDEN', 403);
   }
 
@@ -135,14 +226,15 @@ export async function completeUpload(userId: number, role: string, attachmentId:
   return { ok: true, id: attachmentId, objectKey: att.objectKey };
 }
 
-export async function presignDownload(userId: number, role: string, attachmentId: number) {
+export async function getAttachmentStream(userId: number, role: string, attachmentId: number) {
   const att = await p.attachment.findUnique({
     where: { id: attachmentId },
     include: { order: { select: { clientId: true, id: true } } } as any,
   });
   if (!att) throw httpError('ATTACHMENT_NOT_FOUND', 404);
 
-  if (!canReadOrder(role as any, userId, att.order?.clientId)) {
+  const canRead = await canReadOrderForUser(role, userId, att.order?.clientId);
+  if (!canRead) {
     throw httpError('FORBIDDEN', 403);
   }
 
@@ -151,7 +243,37 @@ export async function presignDownload(userId: number, role: string, attachmentId
   }
 
   const key = att.objectKey ?? att.url ?? '';
-  const url = await minio.presignedGetObject(ATTACH_BUCKET, key, DOWNLOAD_TTL_SEC);
+  try {
+    await minio.statObject(ATTACH_BUCKET, key);
+  } catch {
+    throw httpError('OBJECT_MISSING', 404, 'Uploaded object not found in storage');
+  }
+  const stream = await minio.getObject(ATTACH_BUCKET, key);
+  return {
+    stream,
+    contentType: att.contentType || 'application/octet-stream',
+    filename: att.filename || 'file',
+  };
+}
+
+export async function presignDownload(userId: number, role: string, attachmentId: number) {
+  const att = await p.attachment.findUnique({
+    where: { id: attachmentId },
+    include: { order: { select: { clientId: true, id: true } } } as any,
+  });
+  if (!att) throw httpError('ATTACHMENT_NOT_FOUND', 404);
+
+  const canRead = await canReadOrderForUser(role, userId, att.order?.clientId);
+  if (!canRead) {
+    throw httpError('FORBIDDEN', 403);
+  }
+
+  if (att.status !== STATUS.READY) {
+    throw httpError('ATTACHMENT_NOT_READY', 409);
+  }
+
+  const key = att.objectKey ?? att.url ?? '';
+  const url = await presignGet(ATTACH_BUCKET, key, DOWNLOAD_TTL_SEC);
   return { url };
 }
 
@@ -162,7 +284,8 @@ export async function listByOrder(userId: number, role: string, orderId: number)
   });
   if (!order) throw httpError('ORDER_NOT_FOUND', 404);
 
-  if (!canReadOrder(role as any, userId, order.clientId)) {
+  const canRead = await canReadOrderForUser(role, userId, order.clientId);
+  if (!canRead) {
     throw httpError('FORBIDDEN', 403);
   }
 
@@ -179,7 +302,8 @@ export async function removeAttachment(userId: number, role: string, attachmentI
   });
   if (!att) return { ok: true };
 
-  if (!canWriteAttachment(role as any, userId, att.order?.clientId)) {
+  const canWrite = await canWriteAttachmentForUser(role, userId, att.order?.clientId);
+  if (!canWrite) {
     throw httpError('FORBIDDEN', 403);
   }
 

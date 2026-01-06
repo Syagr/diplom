@@ -253,6 +253,11 @@ export default function ConnectWallet({ onLinked, linkedAddress, mode = 'demo' }
     const eth = getEthereum()
     if (!eth) return
     const onAccounts = async () => {
+      const accounts = await eth.request({ method: 'eth_accounts' }).catch(() => [])
+      if (!accounts || accounts.length === 0) {
+        setSt((s) => ({ ...s, address: undefined, status: 'Disconnected' }))
+        return
+      }
       if (st.provider) await refreshBasics(st.provider)
     }
     const onChain = async () => {
@@ -260,6 +265,17 @@ export default function ConnectWallet({ onLinked, linkedAddress, mode = 'demo' }
     }
     eth.on?.('accountsChanged', onAccounts)
     eth.on?.('chainChanged', onChain)
+    ;(async () => {
+      const accounts = await eth.request({ method: 'eth_accounts' }).catch(() => [])
+      if (!accounts || accounts.length === 0) return
+      try {
+        const provider = new BrowserProvider(eth)
+        await refreshBasics(provider)
+        setSt((s) => ({ ...s, status: 'Connected' }))
+      } catch {
+        // ignore auto-connect errors
+      }
+    })()
     return () => {
       eth.removeListener?.('accountsChanged', onAccounts)
       eth.removeListener?.('chainChanged', onChain)
@@ -291,6 +307,11 @@ export default function ConnectWallet({ onLinked, linkedAddress, mode = 'demo' }
             <div>
               <span className="font-medium">Balance:</span> {st.balance ? `${st.balance} POL` : '-'}
             </div>
+            {st.chainId && st.chainId !== 80002 && (
+              <div className="text-xs text-amber-600 mt-1">
+                You are on the wrong network. Switch to Polygon Amoy (80002).
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
