@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
-import type { OrderStatus } from '@prisma/client';
+import type { OrderStatus, Prisma } from '@prisma/client';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.js';
 import orderService from '../services/order.service.new.js';
@@ -36,6 +36,14 @@ const getUserClientId = async (userId: number) => {
     await prisma.user.update({ where: { id: userId }, data: { clientId } }).catch(() => {});
   }
   return clientId;
+};
+
+const audit = async (type: string, payload: Prisma.InputJsonValue, userId?: number | string | null) => {
+  try {
+    await prisma.auditEvent.create({ data: { type, payload, userId: userId != null ? Number(userId) : null } });
+  } catch {
+    /* non-fatal */
+  }
 };
 
 // ---- validation ----
@@ -170,6 +178,14 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     } catch {
       // ignore timeline failures on create
     }
+
+    void audit('order:created', {
+      orderId: order.id,
+      clientId: order.clientId,
+      vehicleId: order.vehicleId,
+      category: order.category,
+      priority: order.priority,
+    }, user?.id ?? null);
 
     if (data.pickup) {
       try {
@@ -317,6 +333,14 @@ router.put('/:id/status', validate({ params: OrderIdParam }), validate({ body: U
     } catch {
       // ignore notification failures
     }
+
+    void audit('order:status', {
+      orderId,
+      from: current,
+      to: status,
+      actorId: user.id,
+      actorRole: user.role ?? null,
+    }, user.id);
 
     return res.json(updated);
   } catch (e) {

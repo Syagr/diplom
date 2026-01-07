@@ -10,6 +10,7 @@ import { BadRequest } from '../utils/httpError.js';
 import prisma from '@/utils/prisma.js';
 import { generateReceiptForPayment } from '@/services/receipts.service.js';
 import { enqueueEmailNotification } from '@/queues/index.js';
+import type { Prisma } from '@prisma/client';
 
 export const paymentsRouter = Router();
 
@@ -20,6 +21,13 @@ const isStaff = (role?: string) => ['admin', 'service_manager', 'dispatcher', 'm
 const safeEmit = (req: Request, room: string, event: string, payload: unknown) => {
   const io = req.app?.get?.('io');
   if (io?.to) io.to(room).emit(event, payload);
+};
+const audit = async (type: string, payload: Prisma.InputJsonValue, userId?: number | string | null) => {
+  try {
+    await prisma.auditEvent.create({ data: { type, payload, userId: userId != null ? Number(userId) : null } });
+  } catch {
+    /* non-fatal */
+  }
 };
 const advanceOrderAfterPayment = async (orderId: number) => {
   const order = await prisma.order.findUnique({ where: { id: Number(orderId) }, select: { id: true, status: true } });
@@ -50,13 +58,14 @@ const CreateInvoiceBody = z.object({
 
 const DemoPayBody = z.object({
   orderId: z.coerce.number().int().positive(),
-  amount: z.coerce.number().positive().max(10_000_000),
+  // demo всегда 0 — оставляем поле, но игнорируем значение
+  amount: z.coerce.number().nonnegative().max(10_000_000).optional(),
   currency: z.enum(['UAH','USD','EUR']).default('UAH'),
 });
 
 const DemoInitBody = z.object({
   orderId: z.coerce.number().int().positive(),
-  amount: z.coerce.number().positive().max(10_000_000),
+  amount: z.coerce.number().nonnegative().max(10_000_000).optional(),
   currency: z.enum(['UAH','USD','EUR']).default('UAH'),
 });
 
@@ -144,7 +153,7 @@ paymentsRouter.post('/demo/complete', async (req: Request, res: Response, next: 
     const pay = await prisma.payment.create({
       data: {
         orderId: Number(body.orderId),
-        amount: Number(body.amount),
+        amount: 0,
         currency: body.currency,
         provider: 'STRIPE',
         method: 'CARD',
@@ -153,11 +162,20 @@ paymentsRouter.post('/demo/complete', async (req: Request, res: Response, next: 
       },
     });
 
+    void audit('payment:success', {
+      paymentId: pay.id,
+      orderId: pay.orderId,
+      provider: 'DEMO',
+      mode: 'demo/complete',
+      amount: 0,
+      currency: body.currency,
+    }, user.id);
+
     await prisma.orderTimeline.create({
       data: {
         orderId: Number(body.orderId),
         event: 'Payment completed (demo)',
-        details: { paymentId: pay.id, amount: Number(body.amount), currency: body.currency },
+        details: { paymentId: pay.id, amount: 0, currency: body.currency },
       },
     });
 
@@ -222,11 +240,20 @@ paymentsRouter.post('/demo/init', async (req: Request, res: Response, next: Next
       },
     });
 
+    void audit('payment:init', {
+      paymentId: pay.id,
+      orderId: pay.orderId,
+      provider: 'DEMO',
+      mode: 'demo/init',
+      amount: Number(body.amount),
+      currency: body.currency,
+    }, user.id);
+
     await prisma.orderTimeline.create({
       data: {
         orderId: Number(body.orderId),
         event: 'Payment initialized (demo)',
-        details: { paymentId: pay.id, amount: Number(body.amount), currency: body.currency },
+        details: { paymentId: pay.id, amount: 0, currency: body.currency },
       },
     });
 
@@ -291,6 +318,13 @@ paymentsRouter.post('/web3/verify', async (req: Request, res: Response, next: Ne
     await advanceOrderAfterPayment(p.orderId);
     const io = (req.app as any).get('io');
     io?.to(`order:${p.orderId}`).emit('payment:status', { orderId: p.orderId, paymentId: p.id, status: p.status, txHash: (p as any).txHash ?? null });
+    void audit('payment:success', {
+      paymentId: p.id,
+      orderId: p.orderId,
+      provider: 'WEB3',
+      txHash: body.txHash,
+      mode: 'web3/verify',
+    }, undefined);
     return res.json({ payment: p });
   } catch (e) {
     return next(e);

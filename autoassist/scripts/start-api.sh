@@ -12,6 +12,11 @@ if ! command -v pnpm >/dev/null 2>&1; then
 fi
 pnpm -v
 
+# Ensure TypeScript CLI is available even if dev deps are pruned by env
+if ! command -v tsc >/dev/null 2>&1; then
+	npm i -g typescript@5.9.2
+fi
+
 # Install workspace deps including dev packages for build tools.
 NODE_ENV=development pnpm -w install --no-frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 

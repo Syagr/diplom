@@ -145,16 +145,12 @@ export default function PaymentPage() {
       setError('Approve the estimate before starting payment.')
       return
     }
-    if (!total || total <= 0) {
-      setError('Estimate total must be greater than 0. Recalculate the estimate first.')
-      return
-    }
     setCreating(true)
     setError(null)
     try {
       const r = await axios.post('/api/payments/demo/init', {
         orderId: Number(orderId),
-        amount: total,
+        amount: 0,
         currency,
       })
       const pid = r.data?.payment?.id || r.data?.id
@@ -176,16 +172,12 @@ export default function PaymentPage() {
       setError('Approve the estimate before completing payment.')
       return
     }
-    if (!total || total <= 0) {
-      setError('Estimate total must be greater than 0. Recalculate the estimate first.')
-      return
-    }
     setCompleting(true)
     setError(null)
     try {
       const r = await axios.post('/api/payments/demo/complete', {
         orderId: Number(orderId),
-        amount: total,
+        amount: 0,
         currency,
       })
       const pid = r.data?.payment?.id || r.data?.id

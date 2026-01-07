@@ -3,6 +3,7 @@ import prisma from '@/utils/prisma.js';
 import { stripe } from '@/utils/stripe.js';
 import { generateReceiptForPayment } from '@/services/receipts.service.js';
 import { enqueueEmailNotification } from '@/queues/index.js';
+import type { Prisma } from '@prisma/client';
 
 type Purpose = 'ADVANCE' | 'REPAIR' | 'INSURANCE';
 type Provider = 'STRIPE' | 'LIQPAY';
@@ -64,6 +65,14 @@ function ensureAmount(a: number) {
   }
 }
 
+async function audit(type: string, payload: Prisma.InputJsonValue, userId?: number | string | null) {
+  try {
+    await prisma.auditEvent.create({ data: { type, payload, userId: userId != null ? Number(userId) : null } });
+  } catch {
+    /* non-fatal */
+  }
+}
+
 export async function createInvoice(
   userId: number,
   role: Role,
@@ -102,6 +111,15 @@ export async function createInvoice(
     orderBy: { id: 'desc' },
   });
   if (existing) {
+    void audit('payment:init', {
+      paymentId: existing.id,
+      orderId: Number(body.orderId),
+      amount: Number(body.amount),
+      currency: currency.toUpperCase(),
+      provider: 'STRIPE',
+      purpose: body.purpose,
+      reused: true,
+    }, userId);
     return { id: existing.id, invoiceUrl: existing.invoiceUrl, provider: 'STRIPE' as const, reused: true };
   }
   const amountMinor = toMinor(Number(body.amount), currency);
@@ -158,6 +176,16 @@ export async function createInvoice(
     },
   });
 
+  void audit('payment:init', {
+    paymentId: pay.id,
+    orderId: Number(body.orderId),
+    amount: Number(body.amount),
+    currency: currency.toUpperCase(),
+    provider: 'STRIPE',
+    purpose: body.purpose,
+    reused: false,
+  }, userId);
+
   return { id: pay.id, invoiceUrl: session.url, provider: 'STRIPE' as const };
 }
 
@@ -194,6 +222,7 @@ export async function handleStripeEvent(event: any) {
         // payment_intent в сессии
         const paymentIntentId = session.payment_intent ?? null;
 
+        let completedPaymentId: number | null = null;
         await prisma.$transaction(async (tx) => {
           // Находим последний PENDING payment по заказу ИЛИ по sessionId в payload
           const candidate = await tx.payment.findFirst({
@@ -220,10 +249,11 @@ export async function handleStripeEvent(event: any) {
             }
           }
 
-          await tx.payment.update({
+          const updated = await tx.payment.update({
             where: { id: candidate.id },
             data: dataUpdate,
           });
+          completedPaymentId = updated.id;
 
           // Двигаем заказ (бизнес-правило: оплата → APPROVED)
           await tx.order.update({
@@ -258,6 +288,15 @@ export async function handleStripeEvent(event: any) {
           enqueueEmailNotification({ type: 'payment_completed', orderId, paymentId: latest.id }).catch(() => {/* noop */});
         }
 
+        if (completedPaymentId) {
+          void audit('payment:success', {
+            paymentId: completedPaymentId,
+            orderId,
+            provider: 'STRIPE',
+            source: 'checkout.session.completed',
+          });
+        }
+
         return { ok: true };
       }
 
@@ -273,7 +312,7 @@ export async function handleStripeEvent(event: any) {
 
         if (payment && payment.status !== 'COMPLETED') {
           await prisma.$transaction(async (tx) => {
-            await tx.payment.update({
+            const updated = await tx.payment.update({
               where: { id: payment.id },
               data: { status: 'COMPLETED', completedAt: new Date() },
             });
@@ -304,6 +343,13 @@ export async function handleStripeEvent(event: any) {
             generateReceiptForPayment(payment.id).catch(() => {/* noop */});
           }
           enqueueEmailNotification({ type: 'payment_completed', orderId: payment.orderId, paymentId: payment.id }).catch(() => {/* noop */});
+
+          void audit('payment:success', {
+            paymentId: payment.id,
+            orderId: payment.orderId,
+            provider: 'STRIPE',
+            source: 'payment_intent.succeeded',
+          });
         }
 
         return { ok: true };
@@ -322,7 +368,7 @@ export async function handleStripeEvent(event: any) {
           orderBy: { id: 'desc' },
         });
         if (candidate) {
-          await prisma.payment.update({
+          const updated = await prisma.payment.update({
             where: { id: candidate.id },
             data: { status: 'FAILED' },
           });
@@ -332,6 +378,13 @@ export async function handleStripeEvent(event: any) {
               event: 'Payment failed',
               details: { paymentId: candidate.id },
             },
+          });
+
+          void audit('payment:failed', {
+            paymentId: updated.id,
+            orderId: updated.orderId,
+            provider: 'STRIPE',
+            reason: 'checkout.session.expired',
           });
         }
         return { ok: true };

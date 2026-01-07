@@ -14,6 +14,7 @@ import { createServer } from 'http';
 import { PrismaClient } from '@prisma/client';
 import { logger } from './libs/logger.js';
 import SocketService from './services/socket.service.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // Routes
 // Legacy server wiring — keep minimal imports to avoid module-not-found.
@@ -67,6 +68,14 @@ const socketService = new SocketService(httpServer);
 app.set('io', (socketService as any)['io']);
 
 // ---------- Security / Infra middleware ----------
+
+// Correlate requests with a requestId for tracing and audit
+app.use((req, res, next) => {
+  const rid = (req.headers['x-request-id'] as string) || uuidv4();
+  (req as any).requestId = rid;
+  res.setHeader('X-Request-Id', rid);
+  next();
+});
 
 // если стоим за прокси — понадобится для корректного IP в rate-limit
 app.set('trust proxy', 1);
@@ -204,6 +213,7 @@ app.use((req, res, next) => {
   const start = Date.now();
   res.on('finish', () => {
     const duration = Date.now() - start;
+    const requestId = (req as any).requestId;
     logger.info('HTTP Request', {
       method: req.method,
       url: req.url,
@@ -211,7 +221,28 @@ app.use((req, res, next) => {
       duration: `${duration}ms`,
       userAgent: req.get('User-Agent'),
       ip: req.ip,
+      requestId,
     });
+
+    // Audit only error responses to avoid noise
+    if (res.statusCode >= 400) {
+      void prisma.auditEvent
+        .create({
+          data: {
+            type: 'http:error',
+            payload: {
+              status: res.statusCode,
+              method: req.method,
+              url: req.originalUrl,
+              requestId,
+              userAgent: req.get('User-Agent') || null,
+              ip: req.ip,
+            },
+            userId: (req as any)?.user?.id ?? null,
+          },
+        })
+        .catch(() => {});
+    }
   });
   next();
 });
@@ -298,6 +329,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
     stack: err.stack,
     url: req.url,
     method: req.method,
+    requestId: (req as any)?.requestId,
   });
 
   const status = err.status || (err.name === 'UnauthorizedError' ? 401 : 500);
@@ -312,6 +344,23 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
       : status === 422
       ? 'VALIDATION_ERROR'
       : 'INTERNAL');
+
+  void prisma.auditEvent
+    .create({
+      data: {
+        type: 'error:http',
+        payload: {
+          status,
+          code,
+          message: err?.message || String(err),
+          url: req.originalUrl,
+          method: req.method,
+          requestId: (req as any)?.requestId,
+        },
+        userId: (req as any)?.user?.id ?? null,
+      },
+    })
+    .catch(() => {});
 
   res.status(status).json({ error: { code, message: err.message ?? String(err) } });
 });

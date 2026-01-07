@@ -4,6 +4,14 @@ import type { Prisma } from '@prisma/client';
 
 const DAY_MS = 86_400_000;
 
+async function audit(type: string, payload: Record<string, unknown>, userId?: number | string | null) {
+  try {
+    await prisma.auditEvent.create({ data: { type, payload, userId: userId != null ? Number(userId) : null } });
+  } catch {
+    /* non-fatal */
+  }
+}
+
 function httpError(code: string, status = 400, message?: string) {
   const err: any = new Error(message || code);
   err.code = code;
@@ -96,6 +104,12 @@ export class EstimateService {
         },
       });
 
+      void audit('estimate:created', {
+        estimateId: estimate.id,
+        orderId: input.orderId,
+        total: Number(input.totalCost),
+      });
+
       return estimate;
     });
   }
@@ -161,6 +175,11 @@ export class EstimateService {
           data: { orderId: estimate.orderId, event: 'Estimate updated', details: data as any },
         });
 
+        void audit('estimate:updated', {
+          estimateId,
+          orderId: estimate.orderId,
+        });
+
         return estimate;
       });
     } catch (err: any) {
@@ -183,6 +202,11 @@ export class EstimateService {
 
         await tx.orderTimeline.create({
           data: { orderId: estimate.orderId, event: 'Estimate deleted' },
+        });
+
+        void audit('estimate:deleted', {
+          estimateId,
+          orderId: estimate.orderId,
         });
 
         return true;

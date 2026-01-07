@@ -4,7 +4,7 @@ import { minio, ATTACH_BUCKET, ensureBucket, buildObjectKey, presignPut, presign
 import { previewsQ, cleanupQ } from '../queues/index.js';
 import { PresignUploadBody } from '../validators/attachments.schema.js';
 import { canReadOrder, canWriteAttachment } from '../utils/rbac.js';
-import { AttachmentType } from '@prisma/client';
+import { AttachmentType, Prisma } from '@prisma/client';
 
 // --- constants & helpers ---
 const UPLOAD_TTL_SEC = 60 * 5;   // 5 minutes
@@ -20,6 +20,14 @@ const ALLOWED_TYPES: Record<string, { type: AttachmentType; mimes: string[] }> =
   video:    { type: AttachmentType.VIDEO,    mimes: ['video/mp4','video/webm','video/quicktime'] },
   audio:    { type: AttachmentType.AUDIO,    mimes: ['audio/mpeg','audio/aac','audio/wav','audio/ogg'] },
 };
+
+async function audit(type: string, payload: Prisma.InputJsonValue, userId?: number | string | null) {
+  try {
+    await prisma.auditEvent.create({ data: { type, payload, userId: userId != null ? Number(userId) : null } });
+  } catch {
+    /* non-fatal */
+  }
+}
 
 function httpError(code: string, status = 400, message?: string) {
   const err: any = new Error(message || code);
@@ -103,6 +111,7 @@ export async function presignUpload(userId: number, role: string, body: PresignU
   if (existing) {
     // вертаємо новий PUT на той самий ключ (для повторної спроби)
     const putUrl = await presignPut(ATTACH_BUCKET, objectKey, UPLOAD_TTL_SEC);
+    void audit('attachment:presign', { attachmentId: existing.id, orderId: body.orderId, reuse: true }, userId);
     return { id: existing.id, attachmentId: existing.id, putUrl, objectKey: existing.objectKey };
   }
 
@@ -123,6 +132,8 @@ export async function presignUpload(userId: number, role: string, body: PresignU
     },
     select: { id: true, objectKey: true },
   });
+
+  void audit('attachment:presign', { attachmentId: attachment.id, orderId: body.orderId, filename: fileName, size, kind: body.kind ?? 'document' }, userId);
 
   return { id: attachment.id, attachmentId: attachment.id, putUrl, objectKey: attachment.objectKey };
 }
@@ -191,6 +202,15 @@ export async function uploadDirect(
     await previewsQ.add('make-preview', { attachmentId: attachment.id }, { attempts: 3, removeOnComplete: 100, removeOnFail: 200 });
   } catch { /* swallow */ }
 
+  void audit('attachment:uploaded', {
+    attachmentId: attachment.id,
+    orderId: body.orderId,
+    size,
+    contentType,
+    filename: fileName,
+    method: 'direct',
+  }, userId);
+
   return { id: attachment.id, attachmentId: attachment.id, objectKey };
 }
 
@@ -223,6 +243,8 @@ export async function completeUpload(userId: number, role: string, attachmentId:
     await previewsQ.add('make-preview', { attachmentId }, { attempts: 3, removeOnComplete: 100, removeOnFail: 200 });
   } catch { /* swallow */ }
 
+  void audit('attachment:completed', { attachmentId, orderId: att.order?.id ?? null }, userId);
+
   return { ok: true, id: attachmentId, objectKey: att.objectKey };
 }
 
@@ -249,6 +271,7 @@ export async function getAttachmentStream(userId: number, role: string, attachme
     throw httpError('OBJECT_MISSING', 404, 'Uploaded object not found in storage');
   }
   const stream = await minio.getObject(ATTACH_BUCKET, key);
+  void audit('attachment:download', { attachmentId, orderId: att.order?.id ?? null, method: 'stream' }, userId);
   return {
     stream,
     contentType: att.contentType || 'application/octet-stream',
@@ -274,6 +297,7 @@ export async function presignDownload(userId: number, role: string, attachmentId
 
   const key = att.objectKey ?? att.url ?? '';
   const url = await presignGet(ATTACH_BUCKET, key, DOWNLOAD_TTL_SEC);
+  void audit('attachment:download', { attachmentId, orderId: att.order?.id ?? null, method: 'presign' }, userId);
   return { url };
 }
 
@@ -322,6 +346,8 @@ export async function removeAttachment(userId: number, role: string, attachmentI
       await cleanupQ.add('cleanup-object', { objectKey: att.objectKey, attachmentId: att.id }, { delay: delayMs, attempts: 3, removeOnComplete: 100, removeOnFail: 200 });
     }
   } catch { /* swallow */ }
+
+  void audit('attachment:removed', { attachmentId, orderId: att.order?.id ?? null }, userId);
 
   return { ok: true };
 }

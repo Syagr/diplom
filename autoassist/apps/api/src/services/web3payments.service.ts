@@ -2,12 +2,21 @@ import prisma from '@/utils/prisma.js';
 import { ethers } from 'ethers';
 import { generateReceiptForPayment } from '@/services/receipts.service.js';
 import { enqueueEmailNotification } from '@/queues/index.js';
+import type { Prisma } from '@prisma/client';
 
 type VerifyInput = {
   orderId: number;
   paymentId: number;
   txHash: string;
 };
+
+async function audit(type: string, payload: Prisma.InputJsonValue, userId?: number | string | null) {
+  try {
+    await prisma.auditEvent.create({ data: { type, payload, userId: userId != null ? Number(userId) : null } });
+  } catch {
+    /* non-fatal */
+  }
+}
 
 function getProvider() {
   const url = process.env.WEB3_PROVIDER_URL || process.env.WEB3_RPC_URL;
@@ -111,6 +120,7 @@ export async function verifyAndCompleteWeb3Payment({ orderId, paymentId, txHash 
     });
     generateReceiptForPayment(updated.id).catch(() => {/* noop */});
     enqueueEmailNotification({ type: 'payment_completed', orderId: updated.orderId, paymentId: updated.id }).catch(() => {/* noop */});
+    void audit('payment:success', { paymentId: updated.id, orderId: updated.orderId, provider: 'WEB3', txHash, mode: 'demo' });
     return updated;
   }
 ; // идемпотентно
@@ -144,12 +154,14 @@ export async function verifyAndCompleteWeb3Payment({ orderId, paymentId, txHash 
   if (!receipt) {
     const err: any = new Error('TX_TIMEOUT');
     err.status = 504; err.code = 'TX_TIMEOUT';
+    void audit('payment:failed', { paymentId: payment.id, orderId: payment.orderId, provider: 'WEB3', txHash, reason: 'timeout' });
     throw err;
   }
 
   if (receipt.status !== 1) {
     // Неуспешная транзакция
     await prisma.payment.update({ where: { id: payment.id }, data: { status: 'FAILED', txHash } });
+    void audit('payment:failed', { paymentId: payment.id, orderId: payment.orderId, provider: 'WEB3', txHash, reason: 'tx_failed' });
     throw Object.assign(new Error('TX_FAILED'), { status: 400, code: 'TX_FAILED' });
   }
 
@@ -184,6 +196,7 @@ export async function verifyAndCompleteWeb3Payment({ orderId, paymentId, txHash 
   } catch (e) {
     // Mark as failed if amount mismatch when enforced
     await prisma.payment.update({ where: { id: payment.id }, data: { status: 'FAILED', txHash } });
+    void audit('payment:failed', { paymentId: payment.id, orderId: payment.orderId, provider: 'WEB3', txHash, reason: 'amount_mismatch' });
     throw e;
   }
 
@@ -209,6 +222,7 @@ export async function verifyAndCompleteWeb3Payment({ orderId, paymentId, txHash 
     generateReceiptForPayment(updated.id).catch(() => {/* noop */});
   }
   enqueueEmailNotification({ type: 'payment_completed', orderId: updated.orderId, paymentId: updated.id }).catch(() => {/* noop */});
+  void audit('payment:success', { paymentId: updated.id, orderId: updated.orderId, provider: 'WEB3', txHash, mode: 'verify' });
   return updated;
 }
 
