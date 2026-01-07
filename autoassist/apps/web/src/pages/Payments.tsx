@@ -82,12 +82,14 @@ export default function PaymentPage() {
 
   const currency = estimate?.currency || 'UAH'
   const estimateApproved = Boolean(estimate?.approved)
+  const payments = Array.isArray(order?.payments) ? order.payments : []
+  const hasPayments = payments.length > 0
 
   const latestPayment = useMemo(() => {
-    const list = Array.isArray(order?.payments) ? [...order.payments] : []
+    const list = [...payments]
     list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
     return list[0] || null
-  }, [order])
+  }, [payments])
 
   useEffect(() => {
     if (!latestPayment) return
@@ -249,14 +251,37 @@ export default function PaymentPage() {
     )
   }
 
+  const statusBadge = (status?: string) => {
+    const v = String(status || '').toUpperCase()
+    if (v === 'COMPLETED' || v === 'PAID') return 'bg-green-100 text-green-800'
+    if (v === 'PENDING') return 'bg-yellow-100 text-yellow-800'
+    if (v === 'FAILED') return 'bg-red-100 text-red-800'
+    return 'bg-gray-100 text-gray-700'
+  }
+
   return (
     <div className="max-w-3xl mx-auto bg-white p-6 rounded shadow">
-      <h2 className="text-2xl font-bold mb-4">Payment for order #{orderId}</h2>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold">Payment for order #{orderId}</h2>
+          <div className="text-sm text-gray-500">Complete payment after estimate approval.</div>
+        </div>
+        {paymentStatus && (
+          <span className={`px-2 py-1 text-xs rounded-full ${statusBadge(paymentStatus)}`}>
+            {paymentStatus}
+          </span>
+        )}
+      </div>
+
       {estimate ? (
-        <div className="mb-4 space-y-2">
-          <h3 className="font-semibold">Estimate</h3>
-          <div>Approval: {estimateApproved ? 'Approved' : 'Pending'}</div>
-          {estimateSummary && <div>Summary: {estimateSummary}</div>}
+        <div className="mb-6 space-y-2 border rounded p-4 bg-gray-50">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold">Estimate</h3>
+            <span className={`px-2 py-1 text-xs rounded-full ${estimateApproved ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+              {estimateApproved ? 'Approved' : 'Pending'}
+            </span>
+          </div>
+          {estimateSummary && <div className="text-sm">Summary: {estimateSummary}</div>}
           {estimateRecommendations.length > 0 && (
             <ul className="list-disc pl-5 text-sm text-gray-700">
               {estimateRecommendations.map((rec: string, i: number) => (
@@ -265,7 +290,7 @@ export default function PaymentPage() {
             </ul>
           )}
           {(estimateFlags?.night || estimateFlags?.urgent || estimateFlags?.suv) && (
-            <div className="text-sm text-gray-600">
+            <div className="text-xs text-gray-600">
               Applied modifiers:
               {estimateFlags.night ? ' night' : ''}
               {estimateFlags.urgent ? ' urgent' : ''}
@@ -290,7 +315,7 @@ export default function PaymentPage() {
           {total <= 0 && (
             <div className="text-xs text-red-600">Estimate total is 0. Recalculate before payment.</div>
           )}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => generateEstimate('manual')}
               disabled={estimateAction === 'generating'}
@@ -298,19 +323,19 @@ export default function PaymentPage() {
             >
               {estimateAction === 'generating' ? 'Recalculating...' : 'Recalculate estimate'}
             </button>
+            {!estimateApproved && (
+              <button
+                onClick={approveEstimate}
+                disabled={estimateAction === 'approving'}
+                className="px-3 py-1 border rounded"
+              >
+                {estimateAction === 'approving' ? 'Approving...' : 'Approve estimate'}
+              </button>
+            )}
           </div>
-          {!estimateApproved && (
-            <button
-              onClick={approveEstimate}
-              disabled={estimateAction === 'approving'}
-              className="px-3 py-1 border rounded"
-            >
-              {estimateAction === 'approving' ? 'Approving...' : 'Approve estimate'}
-            </button>
-          )}
         </div>
       ) : (
-        <div className="mb-4 text-gray-600">
+        <div className="mb-6 text-gray-600 border rounded p-4 bg-gray-50">
           Estimate is being prepared. Payment unlocks after approval.
           {estimateAction === 'auto' && <span className="ml-2">Auto-calculating...</span>}
           <div className="mt-2">
@@ -325,54 +350,73 @@ export default function PaymentPage() {
         </div>
       )}
 
-      <div className="mb-6">
-        <h3 className="font-semibold mb-2">Classic payment (demo)</h3>
-        <div className="text-sm text-gray-600 mb-2">Simulates payment completion for demo.</div>
-        <button
-          onClick={demoCompletePayment}
-          disabled={completing || !estimateApproved}
-          className="px-3 py-1 bg-primary-600 text-white rounded disabled:opacity-60"
-        >
-          {completing ? 'Processing...' : 'Complete payment'}
-        </button>
-      </div>
-
-      <div className="mt-6">
-        <h3 className="font-semibold mb-2">Web3 payment (Polygon Amoy)</h3>
-        <div className="text-xs text-gray-500 mb-2">
-          Send a transaction in MetaMask and verify using txHash.
-        </div>
-        <div className="flex flex-wrap gap-2 mb-2">
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="border rounded p-4">
+          <h3 className="font-semibold mb-1">Classic payment (demo)</h3>
+          <div className="text-sm text-gray-600 mb-3">Simulates payment completion for demo.</div>
           <button
-            onClick={initWeb3Payment}
-            disabled={creating || !estimateApproved}
-            className="px-3 py-1 border rounded disabled:opacity-60"
+            onClick={demoCompletePayment}
+            disabled={completing || !estimateApproved}
+            className="px-3 py-2 bg-primary-600 text-white rounded disabled:opacity-60"
           >
-            {creating ? 'Initializing...' : 'Init Web3 payment'}
+            {completing ? 'Processing...' : 'Complete payment'}
           </button>
-          {paymentStatus && <div className="text-xs text-gray-600">Status: {paymentStatus}</div>}
         </div>
-        <div className="flex gap-2 items-center">
-          <input
-            className="border px-2 py-1 rounded w-full"
-            placeholder="Paste txHash..."
-            value={txHash}
-            onChange={e => setTxHash(e.target.value)}
-          />
-          <button onClick={verifyTx} disabled={submitting || !txHash} className="px-3 py-1 bg-primary-600 text-white rounded disabled:opacity-60">
-            Verify
-          </button>
+
+        <div className="border rounded p-4">
+          <h3 className="font-semibold mb-1">Web3 payment (Polygon Amoy)</h3>
+          <div className="text-xs text-gray-500 mb-2">
+            Send a transaction in MetaMask and verify using txHash.
+          </div>
+          <div className="flex flex-wrap gap-2 mb-2">
+            <button
+              onClick={initWeb3Payment}
+              disabled={creating || !estimateApproved}
+              className="px-3 py-2 border rounded disabled:opacity-60"
+            >
+              {creating ? 'Initializing...' : 'Init Web3 payment'}
+            </button>
+          </div>
+          <div className="flex gap-2 items-center">
+            <input
+              className="border px-2 py-2 rounded w-full"
+              placeholder="Paste txHash..."
+              value={txHash}
+              onChange={e => setTxHash(e.target.value)}
+            />
+            <button onClick={verifyTx} disabled={submitting || !txHash} className="px-3 py-2 bg-primary-600 text-white rounded disabled:opacity-60">
+              Verify
+            </button>
+          </div>
         </div>
       </div>
 
       {message && <div className="mt-2 text-green-700 text-sm">{message}</div>}
       {error && <div className="mt-2 text-red-700 text-sm">{error}</div>}
 
-      {paymentStatus === 'COMPLETED' && (
-        <div className="mt-4">
-          <button className="px-3 py-1 border rounded" onClick={() => openReceipt()}>
-            Open receipt
-          </button>
+      {hasPayments && (
+        <div className="mt-6 border rounded p-4">
+          <h3 className="font-semibold mb-3">Payment history</h3>
+          <div className="space-y-2">
+            {payments.map((p: any) => (
+              <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`px-2 py-1 text-xs rounded-full ${statusBadge(p.status)}`}>{p.status || 'n/a'}</span>
+                  <span>#{p.id}</span>
+                  <span>{p.method}</span>
+                  <span>{Number(p.amount || 0).toFixed(2)} {p.currency || currency}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-500">{new Date(p.createdAt).toLocaleString()}</span>
+                  {p.status === 'COMPLETED' && (
+                    <button className="px-2 py-1 border rounded" onClick={() => openReceipt(p.id)}>
+                      Open receipt
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

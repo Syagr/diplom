@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
+import { PaymentStatus } from '@prisma/client';
 import prisma from '@/utils/prisma.js';
 import { authenticate } from '@/middleware/auth.middleware.js';
 import { presignDownload, getAttachmentStream } from '@/services/attachments.service.js';
@@ -27,6 +28,53 @@ const isMissingObject = (err: any) => {
 };
 
 router.use(authenticate);
+
+const RegenerateSchema = z.object({
+  status: z.nativeEnum(PaymentStatus).optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  onlyMissing: z.coerce.boolean().optional(),
+});
+
+router.post('/regenerate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    if (!isStaff(user.role)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied' } });
+    }
+
+    const { status, limit, onlyMissing } = RegenerateSchema.parse(req.body ?? {});
+    const targetStatus = status ?? PaymentStatus.COMPLETED;
+    const payments = await prisma.payment.findMany({
+      where: {
+        status: targetStatus,
+        ...(onlyMissing ? { receiptUrl: null } : {}),
+      },
+      select: { id: true },
+      take: limit ?? 200,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const results: Array<{ paymentId: number; ok: boolean; error?: string }> = [];
+    for (const p of payments) {
+      try {
+        await generateReceiptForPayment(p.id);
+        results.push({ paymentId: p.id, ok: true });
+      } catch (err: any) {
+        results.push({ paymentId: p.id, ok: false, error: String(err?.message || err) });
+      }
+    }
+
+    return res.json({
+      total: payments.length,
+      regenerated: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+      results,
+    });
+  } catch (e) {
+    return next(e);
+  }
+});
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -93,35 +141,20 @@ router.post('/:id/url', async (req: Request, res: Response, next: NextFunction) 
       }
     }
 
-    if (!payment.receiptUrl) {
-      try {
-        await generateReceiptForPayment(payment.id);
-        payment = await prisma.payment.findUnique({
-          where: { id },
-          include: { order: { select: { clientId: true } } },
-        });
-      } catch (err) {
-        return res.status(500).json({ error: { code: 'RECEIPT_GENERATION_FAILED', message: 'Failed to generate receipt' } });
-      }
-    }
-    if (!payment?.receiptUrl) {
-      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Receipt not found' } });
-    }
-
-    const match = payment.receiptUrl.match(/\/api\/attachments\/(\d+)\/url/);
-    if (!match) {
-      return res.status(400).json({ error: { code: 'INVALID_RECEIPT_URL', message: 'Receipt URL is malformed' } });
-    }
-
-    const attachmentId = Number(match[1]);
-    const data = await presignDownload(user.id, String(user.role ?? 'customer'), attachmentId);
+    // Always generate fresh link (no reuse)
+    const fresh = await generateReceiptForPayment(payment.id, { skipUpload: true });
+    const base64 = Buffer.from(fresh.pdfBytes).toString('base64');
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
       Pragma: 'no-cache',
       Expires: '0',
       'Surrogate-Control': 'no-store',
     });
-    return res.json(data);
+    return res.json({
+      url: `data:application/pdf;base64,${base64}`,
+      inline: true,
+      contentType: 'application/pdf',
+    });
   } catch (e) {
     return next(e);
   }
@@ -149,54 +182,17 @@ router.get('/:id/file', async (req: Request, res: Response, next: NextFunction) 
       }
     }
 
-    if (!payment.receiptUrl) {
-      try {
-        await generateReceiptForPayment(payment.id);
-        payment = await prisma.payment.findUnique({
-          where: { id },
-          include: { order: { select: { clientId: true } } },
-        });
-      } catch (err) {
-        return res.status(500).json({ error: { code: 'RECEIPT_GENERATION_FAILED', message: 'Failed to generate receipt' } });
-      }
-    }
-    if (!payment?.receiptUrl) {
-      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Receipt not found' } });
-    }
-
-    const match = payment.receiptUrl.match(/\/api\/attachments\/(\d+)\/url/);
-    if (!match) {
-      return res.status(400).json({ error: { code: 'INVALID_RECEIPT_URL', message: 'Receipt URL is malformed' } });
-    }
-
-    const attachmentId = Number(match[1]);
-    try {
-      const data = await getAttachmentStream(user.id, String(user.role ?? 'customer'), attachmentId);
-      res.set({
-        'Content-Type': data.contentType || 'application/octet-stream',
-        'Content-Disposition': `inline; filename="${data.filename || 'receipt.pdf'}"`,
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0',
-        'Surrogate-Control': 'no-store',
-      });
-      data.stream.on('error', next);
-      return data.stream.pipe(res);
-    } catch (err: any) {
-      if (!isMissingObject(err)) throw err;
-      const regenerated = await generateReceiptForPayment(payment.id);
-      const fresh = await getAttachmentStream(user.id, String(user.role ?? 'customer'), regenerated.attachmentId);
-      res.set({
-        'Content-Type': fresh.contentType || 'application/octet-stream',
-        'Content-Disposition': `inline; filename="${fresh.filename || 'receipt.pdf'}"`,
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0',
-        'Surrogate-Control': 'no-store',
-      });
-      fresh.stream.on('error', next);
-      return fresh.stream.pipe(res);
-    }
+    // Always generate fresh and stream directly (no MinIO/attachment reuse)
+    const generated = await generateReceiptForPayment(payment.id, { skipUpload: true });
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="receipt_order-${payment.orderId ?? payment.id}_payment-${payment.id}.pdf"`,
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+      'Surrogate-Control': 'no-store',
+    });
+    return res.end(Buffer.from(generated.pdfBytes));
   } catch (e) {
     return next(e);
   }

@@ -28,7 +28,8 @@
   "license": "MIT",
   "devDependencies": {
     "typescript": "5.9.2",
-    "rimraf": "5.0.10"
+    "rimraf": "5.0.10",
+    "@types/node": "^20.19.17"
   },
   "dependencies": {
     "zod": "3.25.76"

@@ -21,6 +21,20 @@ export default function ReceiptsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const formatAmount = (amount?: number, currency?: string) => {
+    if (amount == null) return '—'
+    return `${amount.toFixed(2)} ${currency ?? ''}`.trim()
+  }
+
+  const formatDate = (value?: string) => {
+    if (!value) return '—'
+    try {
+      return new Date(value).toLocaleString()
+    } catch (_e) {
+      return value
+    }
+  }
+
   async function load() {
     setLoading(true)
     setError(null)
@@ -49,36 +63,74 @@ export default function ReceiptsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto bg-white p-6 rounded shadow">
-      <h2 className="text-2xl font-bold mb-4">Receipts</h2>
-      {loading && <div>Loading...</div>}
-      {error && <div className="text-red-700 text-sm mb-2">{error}</div>}
-      {!loading && receipts.length === 0 && <div className="text-gray-600">No receipts yet.</div>}
-      <ul className="divide-y">
-        {receipts.map((r: Receipt) => (
-          <li key={r.id} className="py-3 flex items-center justify-between">
-            <div>
-              <div className="font-medium">
-                Receipt #{r.id} {r.orderId ? `(order ${r.orderId})` : ''}
+    <div className="max-w-5xl mx-auto">
+      <div className="bg-white shadow-sm border border-slate-200 rounded-2xl p-6">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <p className="text-sm text-slate-500">Documents</p>
+            <h2 className="text-2xl font-semibold text-slate-900">Receipts</h2>
+            <p className="text-sm text-slate-500 mt-1">Download payment receipts and share with clients.</p>
+          </div>
+          <div className="text-sm text-slate-500">{receipts.length} total</div>
+        </div>
+
+        {loading && <div className="text-slate-600 text-sm">Loading receipts...</div>}
+        {error && <div className="text-red-700 text-sm mb-3">{error}</div>}
+        {!loading && receipts.length === 0 && <div className="text-slate-600">No receipts yet.</div>}
+
+        <div className="grid gap-4">
+          {receipts.map((r: Receipt) => {
+            const hasLink = Boolean(r.url)
+            return (
+              <div
+                key={r.id}
+                className="rounded-xl border border-slate-200 shadow-sm bg-gradient-to-br from-white via-white to-slate-50/80 p-5 hover:shadow-md transition"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-xs uppercase tracking-wide text-slate-500">Receipt</div>
+                    <div className="text-lg font-semibold text-slate-900">PAY-{r.id}</div>
+                    <div className="text-sm text-slate-500">Order #{r.orderId ?? '—'}</div>
+                  </div>
+                  <div className="text-right space-y-1">
+                    <div className="text-2xl font-semibold text-slate-900">{formatAmount(r.amount, r.currency)}</div>
+                    <div className="text-sm text-slate-500">{formatDate(r.createdAt)}</div>
+                    <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${hasLink ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {hasLink ? 'PDF ready' : 'Needs link'}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-600">
+                  <div className="flex flex-wrap gap-3">
+                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700">Currency: {r.currency ?? '—'}</span>
+                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700">Receipt #{r.id}</span>
+                    {r.orderId && <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700">Order #{r.orderId}</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {hasLink && (
+                      <a
+                        className="px-3 py-2 rounded-lg border border-slate-200 text-primary-700 hover:bg-primary-50"
+                        target="_blank"
+                        href={r.url ?? '#'}
+                        rel="noreferrer"
+                      >
+                        Open PDF
+                      </a>
+                    )}
+                    <button
+                      className="px-3.5 py-2 rounded-lg bg-primary-600 text-white font-medium hover:bg-primary-700"
+                      onClick={() => openReceipt(r.id)}
+                    >
+                      {hasLink ? 'Refresh link' : 'Generate link'}
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="text-sm text-gray-600">
-                Amount: {r.amount ?? '-'} {r.currency ?? ''} - {r.createdAt ? new Date(r.createdAt).toLocaleString() : ''}
-              </div>
-            </div>
-            <div>
-              {r.url ? (
-                <a className="text-primary-600 hover:underline" target="_blank" href={r.url} rel="noreferrer">
-                  Open PDF
-                </a>
-              ) : (
-                <button className="px-3 py-1 bg-primary-600 text-white rounded" onClick={() => openReceipt(r.id)}>
-                  Generate link
-                </button>
-              )}
-            </div>
-          </li>
-        ))}
-      </ul>
+            )
+          })}
+        </div>
+      </div>
     </div>
   )
 }
