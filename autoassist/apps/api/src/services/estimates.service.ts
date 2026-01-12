@@ -11,6 +11,10 @@ export type CalcInput = {
   night?: boolean;
   urgent?: boolean;
   suv?: boolean;
+  comment?: string;
+  packageName?: string;
+  discountPercent?: number;
+  summary?: string;
 };
 
 type CategoryTemplate = {
@@ -112,7 +116,17 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
-export async function autoCalculateEstimate({ orderId, profile, night, urgent, suv }: CalcInput) {
+export async function autoCalculateEstimate({
+  orderId,
+  profile,
+  night,
+  urgent,
+  suv,
+  comment,
+  packageName,
+  discountPercent: discountPercentRaw,
+  summary,
+}: CalcInput) {
   const order = await prisma.order.findUnique({ where: { id: Number(orderId) } });
   if (!order) throw Object.assign(new Error('ORDER_NOT_FOUND'), { status: 404 });
 
@@ -161,7 +175,10 @@ export async function autoCalculateEstimate({ orderId, profile, night, urgent, s
   });
   const laborHours = round2(laborLines.reduce((acc, l) => acc + l.hours, 0));
   const laborCost = round2(laborLines.reduce((acc, l) => acc + l.total, 0));
-  const total = round2(partsCost + laborCost);
+  const baseTotal = round2(partsCost + laborCost);
+  const discountPercent = Math.max(0, Math.min(80, Number(discountPercentRaw ?? 0)));
+  const discountAmount = round2(baseTotal * (discountPercent / 100));
+  const total = round2(Math.max(0, baseTotal - discountAmount));
 
   const itemsJson = {
     items: partsLines,
@@ -173,10 +190,15 @@ export async function autoCalculateEstimate({ orderId, profile, night, urgent, s
       baseLaborHours,
       laborRate,
       cat,
-      summary: template.summary,
+      summary: summary?.trim() ? summary.trim() : template.summary,
       recommendations: template.recommendations,
       flags: { night: !!night, urgent: !!urgent, suv: !!suv },
       dbProfileId: dbProfile?.id ?? null,
+      totalBeforeDiscount: baseTotal,
+      discountPercent,
+      discountAmount,
+      packageName: packageName?.trim() || null,
+      comment: comment?.trim() || null,
     },
   };
   const laborJson = {

@@ -54,6 +54,11 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
   const estimateTotal = estimate?.total != null ? Number(estimate.total) : null;
   const estimateCurrency = estimate?.currency ?? (payment as any).currency ?? 'UAH';
   const estimateProfile = estimateMeta?.profile ?? null;
+  const estimatePackage = estimateMeta?.packageName ?? null;
+  const estimateComment = estimateMeta?.comment ?? null;
+  const discountPercent = estimateMeta?.discountPercent != null ? Number(estimateMeta.discountPercent) : null;
+  const discountAmount = estimateMeta?.discountAmount != null ? Number(estimateMeta.discountAmount) : null;
+  const totalBeforeDiscount = estimateMeta?.totalBeforeDiscount != null ? Number(estimateMeta.totalBeforeDiscount) : null;
 
   // Prepare QR (tx or fallback)
   const explorerBase = opts.explorerTxBaseUrl || getExplorerTxBaseUrl();
@@ -315,7 +320,7 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
   });
   page.drawText(badge, { x: margin + 24, y: heroY + heroHeight - 78, size: 9.5, font: fontBold, color: colors.accent });
 
-  page.drawText(`Receipt PAY-${payment.id} • Order #${order.id}`, {
+  page.drawText(`Receipt PAY-${payment.id} | Order #${order.id}`, {
     x: margin + 18,
     y: heroY + heroHeight - 108,
     size: 13.5,
@@ -323,7 +328,7 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
     color: colors.ink,
   });
   page.drawText(
-    `Amount ${Number(payment.amount).toFixed(2)} ${(payment as any).currency ?? 'UAH'} • Method ${String(payment.method || 'n/a')} • ${String(payment.provider || 'n/a')}`,
+    `Amount ${Number(payment.amount).toFixed(2)} ${(payment as any).currency ?? 'UAH'} | Method ${String(payment.method || 'n/a')} | Provider ${String(payment.provider || 'n/a')}`,
     {
       x: margin + 18,
       y: heroY + heroHeight - 126,
@@ -368,6 +373,8 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
   const issueText = order.description ? String(order.description) : 'n/a';
   const pickupText = pickup ? String(pickup.address ?? `${pickup.lat}, ${pickup.lng}`) : 'n/a';
   const serviceText = order.serviceCenter?.name ? String(order.serviceCenter.name) : 'n/a';
+  const serviceAddress = order.serviceCenter?.address ? String(order.serviceCenter.address) : null;
+  const servicePhone = order.serviceCenter?.phone ? String(order.serviceCenter.phone) : null;
   drawCardColumns(
     'Order & service',
     [
@@ -378,6 +385,8 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
     ],
     [
       { label: 'Service center', value: serviceText },
+      ...(serviceAddress ? [{ label: 'Service address', value: serviceAddress }] : []),
+      ...(servicePhone ? [{ label: 'Service phone', value: servicePhone }] : []),
       { label: 'Pickup', value: pickupText },
       { label: 'Order ID', value: String(order.id) },
     ],
@@ -405,11 +414,16 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
     estimateRows.push({ label: 'Approved', value: estimate.approved ? 'Yes' : 'Pending' });
     estimateRows.push({ label: 'Total', value: `${estimateTotal != null ? estimateTotal.toFixed(2) : 'n/a'} ${estimateCurrency}` });
     if (estimateProfile) estimateRows.push({ label: 'Profile', value: String(estimateProfile) });
+    if (estimatePackage) estimateRows.push({ label: 'Package', value: String(estimatePackage) });
     if (estimateMeta?.summary) estimateRows.push({ label: 'Summary', value: String(estimateMeta.summary) });
+    if (estimateComment) estimateRows.push({ label: 'Admin note', value: String(estimateComment) });
     if (estimateMeta?.baseParts != null) estimateRows.push({ label: 'Base parts', value: Number(estimateMeta.baseParts).toFixed(2) });
     if (estimateMeta?.laborRate != null) estimateRows.push({ label: 'Labor rate', value: Number(estimateMeta.laborRate).toFixed(2) });
     if (estimateMeta?.coeffParts) estimateRows.push({ label: 'Parts coeff', value: Number(estimateMeta.coeffParts).toFixed(2) });
     if (estimateMeta?.coeffLabor) estimateRows.push({ label: 'Labor coeff', value: Number(estimateMeta.coeffLabor).toFixed(2) });
+    if (discountPercent != null) estimateRows.push({ label: 'Discount %', value: `${discountPercent.toFixed(2)}%` });
+    if (discountAmount != null) estimateRows.push({ label: 'Discount amount', value: `${discountAmount.toFixed(2)} ${estimateCurrency}` });
+    if (totalBeforeDiscount != null) estimateRows.push({ label: 'Total before discount', value: `${totalBeforeDiscount.toFixed(2)} ${estimateCurrency}` });
   } else {
     estimateRows.push({ label: 'Status', value: 'No estimate' });
   }
@@ -473,7 +487,6 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
   };
   const receiptHash = sha256Hex(canonicalJson(receiptPayload));
   try {
-    pdf.setTitle(`Receipt PAY-${payment.id}`);
     pdf.setSubject(`ReceiptHash:${receiptHash}`);
     pdf.setProducer('AutoAssist Web3');
     pdf.setCreator('AutoAssist Web3');
@@ -561,3 +574,4 @@ export async function generateReceiptForPayment(paymentId: number, opts: Generat
 
   return { attachmentId: attachment.id, urlPath, receiptHash };
 }
+

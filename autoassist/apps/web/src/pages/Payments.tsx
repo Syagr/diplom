@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import axios from 'axios'
+import { useAuth } from '../shared/hooks/useAuth'
 
 type EstimateItem = {
   name?: string
@@ -37,6 +38,7 @@ function pickLaborLines(estimate: any): LaborLine[] {
 
 export default function PaymentPage() {
   const { orderId } = useParams<{ orderId: string }>()
+  const { role } = useAuth()
   const [order, setOrder] = useState<any>(null)
   const [txHash, setTxHash] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -46,8 +48,35 @@ export default function PaymentPage() {
   const [creating, setCreating] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null)
-  const [autoEstimateRequested, setAutoEstimateRequested] = useState(false)
   const [estimateAction, setEstimateAction] = useState<string | null>(null)
+  const [showCardModal, setShowCardModal] = useState(false)
+  const [web3Step, setWeb3Step] = useState<'idle' | 'initialized' | 'confirmed'>('idle')
+  const [selectedCardId, setSelectedCardId] = useState('visa-demo')
+
+  const demoCards = useMemo(
+    () => [
+      {
+        id: 'visa-demo',
+        label: 'Visa •••• 4242 (demo)',
+        holder: 'Pavlo Syahrovski',
+        number: '4242 4242 4242 4242',
+        expiry: '12/29',
+        cvc: '123',
+        bank: 'AutoAssist Bank',
+      },
+      {
+        id: 'mc-demo',
+        label: 'Mastercard •••• 4444 (demo)',
+        holder: 'Olena Kovalenko',
+        number: '5555 4444 3333 2222',
+        expiry: '08/28',
+        cvc: '456',
+        bank: 'KyivPay',
+      },
+    ],
+    []
+  )
+  const activeCard = demoCards.find((c) => c.id === selectedCardId) || demoCards[0]
 
   const loadOrder = async () => {
     if (!orderId) return
@@ -84,6 +113,7 @@ export default function PaymentPage() {
   const estimateApproved = Boolean(estimate?.approved)
   const payments = Array.isArray(order?.payments) ? order.payments : []
   const hasPayments = payments.length > 0
+  const isStaff = ['admin', 'service_manager', 'dispatcher', 'manager'].includes(String(role || '').toLowerCase())
 
   const latestPayment = useMemo(() => {
     const list = [...payments]
@@ -118,14 +148,6 @@ export default function PaymentPage() {
     }
   }
 
-  useEffect(() => {
-    if (!order) return
-    if (estimate && total > 0) return
-    if (autoEstimateRequested) return
-    setAutoEstimateRequested(true)
-    generateEstimate('auto')
-  }, [order, estimate, total, autoEstimateRequested])
-
   async function approveEstimate() {
     if (!estimate?.id) return
     setEstimateAction('approving')
@@ -150,16 +172,15 @@ export default function PaymentPage() {
     try {
       const r = await axios.post('/api/payments/demo/init', {
         orderId: Number(orderId),
-        amount: 0,
-        currency,
       })
       const pid = r.data?.payment?.id || r.data?.id
       const status = r.data?.payment?.status || r.data?.status || 'PENDING'
       const demoHash = r.data?.demoTxHash
       if (pid) setPaymentId(Number(pid))
       setPaymentStatus(status)
-      if (demoHash && !txHash) setTxHash(demoHash)
-      setMessage('Payment initialized for Web3 verification.')
+      if (demoHash) setTxHash(demoHash)
+      setWeb3Step('initialized')
+      setMessage('Web3 payment initialized. Confirm to complete.')
     } catch (e: any) {
       setError(e?.response?.data?.error?.message || 'Failed to initialize payment')
     } finally {
@@ -175,11 +196,7 @@ export default function PaymentPage() {
     setCompleting(true)
     setError(null)
     try {
-      const r = await axios.post('/api/payments/demo/complete', {
-        orderId: Number(orderId),
-        amount: 0,
-        currency,
-      })
+      const r = await axios.post('/api/payments/demo/complete', { orderId: Number(orderId) })
       const pid = r.data?.payment?.id || r.data?.id
       const status = r.data?.payment?.status || 'COMPLETED'
       const receiptError = r.data?.receiptError
@@ -202,34 +219,38 @@ export default function PaymentPage() {
     const id = pid || paymentId
     if (!id) return
     try {
-      const url = `/api/receipts/${id}/file`
-      window.open(url, '_blank')
+      const res = await axios.get(`/api/receipts/${id}/file`, { responseType: 'blob' })
+      const blobUrl = URL.createObjectURL(res.data)
+      window.open(blobUrl, '_blank')
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
     } catch (e: any) {
       setError(e?.response?.data?.error?.message || 'Failed to open receipt')
     }
   }
 
-  async function verifyTx() {
-    if (!orderId || !txHash) return
-    if (!paymentId) {
-      setError('Create a Web3 payment first.')
-      return
-    }
+  async function confirmWeb3Payment() {
+    if (!orderId || !paymentId || !txHash) return
     setSubmitting(true)
     setError(null)
     setMessage(null)
     try {
-      const r = await axios.post(`/api/payments/web3/verify`, {
+      const r = await axios.post('/api/payments/demo/web3/confirm', {
         orderId: Number(orderId),
         paymentId: Number(paymentId),
         txHash,
       })
-      const status = r.data?.payment?.status || r.data?.status || 'OK'
+      const status = r.data?.payment?.status || r.data?.status || 'COMPLETED'
+      const receiptError = r.data?.receiptError
       setPaymentStatus(status)
-      setMessage(`Verification status: ${status}`)
+      setWeb3Step('confirmed')
+      if (receiptError) {
+        setError(`Payment completed, but receipt failed: ${receiptError}`)
+      } else {
+        setMessage('Web3 payment completed.')
+      }
       await openReceipt(paymentId)
     } catch (e: any) {
-      setError(e?.response?.data?.error?.message || 'Failed to verify transaction')
+      setError(e?.response?.data?.error?.message || 'Failed to confirm Web3 payment')
     } finally {
       setSubmitting(false)
     }
@@ -307,79 +328,87 @@ export default function PaymentPage() {
           {total <= 0 && (
             <div className="text-xs text-red-600">Estimate total is 0. Recalculate before payment.</div>
           )}
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => generateEstimate('manual')}
-              disabled={estimateAction === 'generating'}
-              className="px-3 py-1 border rounded"
-            >
-              {estimateAction === 'generating' ? 'Recalculating...' : 'Recalculate estimate'}
-            </button>
-            {!estimateApproved && (
+          {isStaff && (
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={approveEstimate}
-                disabled={estimateAction === 'approving'}
+                onClick={() => generateEstimate('manual')}
+                disabled={estimateAction === 'generating'}
                 className="px-3 py-1 border rounded"
               >
-                {estimateAction === 'approving' ? 'Approving...' : 'Approve estimate'}
+                {estimateAction === 'generating' ? 'Recalculating...' : 'Recalculate estimate'}
               </button>
-            )}
-          </div>
+              {!estimateApproved && (
+                <button
+                  onClick={approveEstimate}
+                  disabled={estimateAction === 'approving'}
+                  className="px-3 py-1 border rounded"
+                >
+                  {estimateAction === 'approving' ? 'Approving...' : 'Approve estimate'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="mb-6 text-gray-600 border rounded p-4 bg-gray-50">
-          Estimate is being prepared. Payment unlocks after approval.
-          {estimateAction === 'auto' && <span className="ml-2">Auto-calculating...</span>}
-          <div className="mt-2">
-            <button
-              onClick={() => generateEstimate('manual')}
-              disabled={estimateAction === 'generating'}
-              className="px-3 py-1 border rounded"
-            >
-              {estimateAction === 'generating' ? 'Calculating...' : 'Generate estimate now'}
-            </button>
-          </div>
+          Estimate is being prepared by admin. Payment unlocks after approval.
+          {isStaff && (
+            <div className="mt-2">
+              <button
+                onClick={() => generateEstimate('manual')}
+                disabled={estimateAction === 'generating'}
+                className="px-3 py-1 border rounded"
+              >
+                {estimateAction === 'generating' ? 'Calculating...' : 'Generate estimate now'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="border rounded p-4">
-          <h3 className="font-semibold mb-1">Classic payment (demo)</h3>
-          <div className="text-sm text-gray-600 mb-3">Simulates payment completion for demo.</div>
-          <button
-            onClick={demoCompletePayment}
-            disabled={completing || !estimateApproved}
-            className="px-3 py-2 bg-primary-600 text-white rounded disabled:opacity-60"
-          >
-            {completing ? 'Processing...' : 'Complete payment'}
-          </button>
-        </div>
-
-        <div className="border rounded p-4">
           <h3 className="font-semibold mb-1">Web3 payment (Polygon Amoy)</h3>
-          <div className="text-xs text-gray-500 mb-2">
-            Send a transaction in MetaMask and verify using txHash.
+          <div className="text-xs text-gray-500 mb-3">
+            Demo flow that looks like a real wallet transaction.
           </div>
-          <div className="flex flex-wrap gap-2 mb-2">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <span className={`px-2 py-1 text-xs rounded-full ${web3Step === 'idle' ? 'bg-gray-100 text-gray-700' : 'bg-green-100 text-green-800'}`}>Wallet connected</span>
+            <span className={`px-2 py-1 text-xs rounded-full ${web3Step === 'initialized' || web3Step === 'confirmed' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>Transaction created</span>
+            <span className={`px-2 py-1 text-xs rounded-full ${web3Step === 'confirmed' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>Confirmed</span>
+          </div>
+          <div className="flex flex-wrap gap-2 mb-3">
             <button
               onClick={initWeb3Payment}
               disabled={creating || !estimateApproved}
               className="px-3 py-2 border rounded disabled:opacity-60"
             >
-              {creating ? 'Initializing...' : 'Init Web3 payment'}
+              {creating ? 'Preparing...' : 'Start Web3 payment'}
+            </button>
+            <button
+              onClick={confirmWeb3Payment}
+              disabled={submitting || !txHash || !paymentId}
+              className="px-3 py-2 bg-primary-600 text-white rounded disabled:opacity-60"
+            >
+              {submitting ? 'Confirming...' : 'Confirm in wallet'}
             </button>
           </div>
-          <div className="flex gap-2 items-center">
-            <input
-              className="border px-2 py-2 rounded w-full"
-              placeholder="Paste txHash..."
-              value={txHash}
-              onChange={e => setTxHash(e.target.value)}
-            />
-            <button onClick={verifyTx} disabled={submitting || !txHash} className="px-3 py-2 bg-primary-600 text-white rounded disabled:opacity-60">
-              Verify
-            </button>
+          <div className="text-xs text-gray-500 mb-1">Transaction hash</div>
+          <div className="border rounded px-3 py-2 text-sm bg-gray-50 break-all">
+            {txHash ? txHash : 'Not created yet'}
           </div>
+        </div>
+
+        <div className="border rounded p-4 md:col-span-2">
+          <h3 className="font-semibold mb-1">Card payment (demo)</h3>
+          <div className="text-sm text-gray-600 mb-3">A card checkout flow with a confirmation screen.</div>
+          <button
+            onClick={() => setShowCardModal(true)}
+            disabled={completing || !estimateApproved}
+            className="px-3 py-2 border rounded disabled:opacity-60"
+          >
+            Open card checkout
+          </button>
         </div>
       </div>
 
@@ -408,6 +437,81 @@ export default function PaymentPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {showCardModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded shadow-lg w-full max-w-md p-5">
+            <h3 className="text-lg font-semibold mb-1">Card checkout (demo)</h3>
+            <div className="text-sm text-gray-600 mb-4">
+              Amount: {total.toFixed(2)} {currency}
+            </div>
+            <div className="space-y-2 mb-4 text-sm">
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  checked={selectedCardId === 'visa-demo'}
+                  onChange={() => setSelectedCardId('visa-demo')}
+                />
+                {demoCards[0].label}
+              </label>
+              <label className="flex items-center gap-2 text-gray-500">
+                <input
+                  type="radio"
+                  checked={selectedCardId === 'mc-demo'}
+                  onChange={() => setSelectedCardId('mc-demo')}
+                />
+                {demoCards[1].label}
+              </label>
+            </div>
+            <div className="mb-4 rounded-lg border bg-gradient-to-br from-slate-900 to-slate-700 text-white p-4">
+              <div className="text-xs uppercase tracking-widest text-slate-200">{activeCard.bank}</div>
+              <div className="mt-3 text-lg font-semibold tracking-wider">{activeCard.number}</div>
+              <div className="mt-3 flex items-center justify-between text-xs text-slate-200">
+                <span>{activeCard.holder}</span>
+                <span>{activeCard.expiry}</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-500">Cardholder name</span>
+                <input className="border rounded px-2 py-1 bg-gray-50" readOnly value={activeCard.holder} />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-500">Expiry</span>
+                <input className="border rounded px-2 py-1 bg-gray-50" readOnly value={activeCard.expiry} />
+              </label>
+              <label className="flex flex-col gap-1 col-span-2">
+                <span className="text-xs text-gray-500">Card number</span>
+                <input className="border rounded px-2 py-1 bg-gray-50" readOnly value={activeCard.number} />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs text-gray-500">CVC</span>
+                <input className="border rounded px-2 py-1 bg-gray-50" readOnly value={activeCard.cvc} />
+              </label>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                className="px-3 py-2 border rounded"
+                onClick={() => {
+                  setShowCardModal(false)
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-2 bg-primary-600 text-white rounded disabled:opacity-60"
+                disabled={completing}
+                onClick={async () => {
+                  setShowCardModal(false)
+                  await demoCompletePayment()
+                }}
+              >
+                {completing ? 'Processing...' : 'Pay now'}
+              </button>
+            </div>
           </div>
         </div>
       )}

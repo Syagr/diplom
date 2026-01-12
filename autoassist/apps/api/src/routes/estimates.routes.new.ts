@@ -14,13 +14,32 @@ const AutoBody = z.object({
   night: z.coerce.boolean().optional(),
   urgent: z.coerce.boolean().optional(),
   suv: z.coerce.boolean().optional(),
+  comment: z.string().trim().max(500).optional(),
+  packageName: z.string().trim().max(120).optional(),
+  discountPercent: z.coerce.number().min(0).max(80).optional(),
+  summary: z.string().trim().max(200).optional(),
 });
 
 router.post('/auto', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
-  const body = AutoBody.parse(req.body);
-  const params = { orderId: body.orderId as number, profile: body.profile, night: body.night, urgent: body.urgent, suv: body.suv };
-  const est = await autoCalculateEstimate(params);
+    const user = (req as any).user as { id: number; role?: string } | undefined;
+    const role = String(user?.role || '').toLowerCase();
+    if (!user || !['admin', 'manager'].includes(role)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Admin only' } });
+    }
+    const body = AutoBody.parse(req.body);
+    const params = {
+      orderId: body.orderId as number,
+      profile: body.profile,
+      night: body.night,
+      urgent: body.urgent,
+      suv: body.suv,
+      comment: body.comment,
+      packageName: body.packageName,
+      discountPercent: body.discountPercent,
+      summary: body.summary,
+    };
+    const est = await autoCalculateEstimate(params);
     const io = req.app.get('io');
     io?.to(`order:${body.orderId}`).emit('estimate:updated', { orderId: body.orderId, estimateId: est.id, total: est.total });
     // Ensure numeric total for test stability (Prisma Decimal may serialize as string)
@@ -33,6 +52,11 @@ router.post('/auto', authenticate, async (req: Request, res: Response, next: Nex
 
 router.post('/:orderId/lock', authenticate, async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const user = (req as any).user as { id: number; role?: string } | undefined;
+    const role = String(user?.role || '').toLowerCase();
+    if (!user || !['admin', 'manager'].includes(role)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Admin only' } });
+    }
     const orderId = z.coerce.number().int().positive().parse(req.params.orderId);
     const est = await lockEstimate(orderId);
     const io = req.app.get('io');
@@ -49,6 +73,10 @@ router.post('/:id/approve', authenticate, async (req: Request, res: Response, ne
   try {
     const user = (req as any).user as { id: number; role?: string } | undefined;
     if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+    const role = String(user.role || '').toLowerCase();
+    if (!['admin', 'manager'].includes(role)) {
+      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Admin only' } });
+    }
 
     const estimateId = z.coerce.number().int().positive().parse(req.params.id);
     const estimate = await prisma.estimate.findUnique({
@@ -56,16 +84,6 @@ router.post('/:id/approve', authenticate, async (req: Request, res: Response, ne
       include: { order: { select: { id: true, clientId: true } } },
     });
     if (!estimate) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Estimate not found' } });
-
-    const isStaff = ['admin', 'manager'].includes(String(user.role || '').toLowerCase());
-    let isOwner = false;
-    if (!isStaff) {
-      const u = await prisma.user.findUnique({ where: { id: user.id }, select: { clientId: true } });
-      isOwner = !!u?.clientId && u.clientId === estimate.order?.clientId;
-    }
-    if (!isStaff && !isOwner) {
-      return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied' } });
-    }
 
     if (estimate.approved) {
       return res.status(409).json({ error: { code: 'ALREADY_APPROVED', message: 'Estimate already approved' } });

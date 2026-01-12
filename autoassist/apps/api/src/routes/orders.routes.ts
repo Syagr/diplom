@@ -8,7 +8,6 @@ import orderService from '../services/order.service.new.js';
 import prisma from '@/utils/prisma.js';
 import { GetOrdersQuery, OrderIdParam, UpdateOrderStatusBody } from '../validators/orders.schema.js';
 import NotificationService from '@/services/notification.service.js';
-import { autoCalculateEstimate } from '@/services/estimates.service.js';
 import { findNearbyServiceCenters } from '@/services/serviceCenters.service.js';
 
 const router = Router();
@@ -213,7 +212,6 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     }
 
     try {
-      await autoCalculateEstimate({ orderId: order.id, profile: 'STANDARD' });
     } catch {
       // non-fatal for order creation
     }

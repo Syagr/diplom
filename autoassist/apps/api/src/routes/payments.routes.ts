@@ -29,6 +29,12 @@ const audit = async (type: string, payload: Prisma.InputJsonValue, userId?: numb
     /* non-fatal */
   }
 };
+const getApprovedEstimate = async (orderId: number) => {
+  return prisma.estimate.findFirst({
+    where: { orderId: Number(orderId), approved: true },
+    select: { id: true, total: true, currency: true },
+  });
+};
 const advanceOrderAfterPayment = async (orderId: number) => {
   const order = await prisma.order.findUnique({ where: { id: Number(orderId) }, select: { id: true, status: true } });
   if (!order) return;
@@ -58,15 +64,16 @@ const CreateInvoiceBody = z.object({
 
 const DemoPayBody = z.object({
   orderId: z.coerce.number().int().positive(),
-  // demo всегда 0 — оставляем поле, но игнорируем значение
-  amount: z.coerce.number().nonnegative().max(10_000_000).optional(),
-  currency: z.enum(['UAH','USD','EUR']).default('UAH'),
 });
 
 const DemoInitBody = z.object({
   orderId: z.coerce.number().int().positive(),
-  amount: z.coerce.number().nonnegative().max(10_000_000).optional(),
-  currency: z.enum(['UAH','USD','EUR']).default('UAH'),
+});
+
+const DemoWeb3ConfirmBody = z.object({
+  orderId: z.coerce.number().int().positive(),
+  paymentId: z.coerce.number().int().positive(),
+  txHash: z.string().regex(/^0x([A-Fa-f0-9]{64})$/),
 });
 
 paymentsRouter.use('/invoice', authenticate);
@@ -142,6 +149,12 @@ paymentsRouter.post('/demo/complete', async (req: Request, res: Response, next: 
     if (!order.estimate?.approved) {
       return res.status(409).json({ error: { code: 'ESTIMATE_NOT_APPROVED', message: 'Estimate must be approved before payment' } });
     }
+    const estimate = await getApprovedEstimate(Number(body.orderId));
+    const amount = estimate?.total != null ? Number(estimate.total) : 0;
+    const currency = estimate?.currency ?? 'UAH';
+    if (!estimate || amount <= 0) {
+      return res.status(409).json({ error: { code: 'ESTIMATE_INVALID', message: 'Approved estimate total must be greater than 0' } });
+    }
 
     if (!isStaff(user.role)) {
       const u = await prisma.user.findUnique({ where: { id: user.id }, select: { clientId: true } });
@@ -150,11 +163,12 @@ paymentsRouter.post('/demo/complete', async (req: Request, res: Response, next: 
       }
     }
 
+    
     const pay = await prisma.payment.create({
       data: {
         orderId: Number(body.orderId),
-        amount: 0,
-        currency: body.currency,
+        amount,
+        currency,
         provider: 'STRIPE',
         method: 'CARD',
         status: 'COMPLETED',
@@ -167,15 +181,15 @@ paymentsRouter.post('/demo/complete', async (req: Request, res: Response, next: 
       orderId: pay.orderId,
       provider: 'DEMO',
       mode: 'demo/complete',
-      amount: 0,
-      currency: body.currency,
+      amount,
+      currency,
     }, user.id);
 
     await prisma.orderTimeline.create({
       data: {
         orderId: Number(body.orderId),
         event: 'Payment completed (demo)',
-        details: { paymentId: pay.id, amount: 0, currency: body.currency },
+        details: { paymentId: pay.id, amount, currency },
       },
     });
 
@@ -229,12 +243,19 @@ paymentsRouter.post('/demo/init', async (req: Request, res: Response, next: Next
       }
     }
 
+    const estimate = await getApprovedEstimate(Number(body.orderId));
+    const amount = estimate?.total != null ? Number(estimate.total) : 0;
+    const currency = estimate?.currency ?? 'UAH';
+    if (!estimate || amount <= 0) {
+      return res.status(409).json({ error: { code: 'ESTIMATE_INVALID', message: 'Approved estimate total must be greater than 0' } });
+    }
+
     const pay = await prisma.payment.create({
       data: {
         orderId: Number(body.orderId),
-        amount: Number(body.amount),
-        currency: body.currency,
-        provider: 'LIQPAY',
+        amount,
+        currency,
+        provider: 'WEB3',
         method: 'CRYPTO',
         status: 'PENDING',
       },
@@ -245,15 +266,15 @@ paymentsRouter.post('/demo/init', async (req: Request, res: Response, next: Next
       orderId: pay.orderId,
       provider: 'DEMO',
       mode: 'demo/init',
-      amount: Number(body.amount),
-      currency: body.currency,
+      amount,
+      currency,
     }, user.id);
 
     await prisma.orderTimeline.create({
       data: {
         orderId: Number(body.orderId),
         event: 'Payment initialized (demo)',
-        details: { paymentId: pay.id, amount: 0, currency: body.currency },
+        details: { paymentId: pay.id, amount, currency },
       },
     });
 
@@ -300,8 +321,6 @@ export function stripeWebhookHandler(req: Request & { rawBody?: Buffer }, res: R
   }
 }
 
-export default paymentsRouter;
-
 /**
  * POST /payments/web3/verify
  * Верификация web3-транзакции (txHash) и завершение платежа.
@@ -330,3 +349,89 @@ paymentsRouter.post('/web3/verify', async (req: Request, res: Response, next: Ne
     return next(e);
   }
 });
+
+/**
+ * POST /payments/demo/web3/confirm
+ * Demo-only completion of a pending Web3 payment.
+ */
+paymentsRouter.post('/demo/web3/confirm', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = getAuth(req);
+    if (!user) return res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
+
+    const body = DemoWeb3ConfirmBody.parse(req.body);
+    const payment = await prisma.payment.findUnique({ where: { id: Number(body.paymentId) } });
+    if (!payment || payment.orderId !== Number(body.orderId)) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Payment not found' } });
+    }
+    if (payment.status === 'COMPLETED') {
+      return res.json({ payment });
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { id: Number(body.orderId) },
+      select: { id: true, clientId: true, estimate: { select: { approved: true } } },
+    });
+    if (!order) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Order not found' } });
+    if (!order.estimate?.approved) {
+      return res.status(409).json({ error: { code: 'ESTIMATE_NOT_APPROVED', message: 'Estimate must be approved before payment' } });
+    }
+
+    if (!isStaff(user.role)) {
+      const u = await prisma.user.findUnique({ where: { id: user.id }, select: { clientId: true } });
+      if (!u?.clientId || u.clientId !== order.clientId) {
+        return res.status(403).json({ error: { code: 'FORBIDDEN', message: 'Access denied' } });
+      }
+    }
+
+    const updated = await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: 'COMPLETED',
+        completedAt: new Date(),
+        txHash: body.txHash,
+        provider: 'WEB3',
+        method: 'CRYPTO',
+      },
+    });
+
+    void audit('payment:success', {
+      paymentId: updated.id,
+      orderId: updated.orderId,
+      provider: 'DEMO',
+      mode: 'demo/web3/confirm',
+      txHash: body.txHash,
+    }, user.id);
+
+    await prisma.orderTimeline.create({
+      data: {
+        orderId: updated.orderId,
+        event: 'Payment confirmed (demo web3)',
+        details: { paymentId: updated.id, txHash: body.txHash },
+      },
+    });
+
+    await advanceOrderAfterPayment(updated.orderId);
+
+    let receipt: any = null;
+    let receiptError: string | null = null;
+    try {
+      receipt = await generateReceiptForPayment(updated.id);
+    } catch (err: any) {
+      receiptError = String(err?.message || 'Failed to generate receipt');
+    }
+
+    safeEmit(req, `order:${updated.orderId}`, 'payment:status', {
+      orderId: updated.orderId,
+      paymentId: updated.id,
+      status: updated.status,
+      txHash: body.txHash,
+    });
+
+    return res.json({ payment: updated, receipt, receiptError });
+  } catch (e) {
+    return next(e);
+  }
+});
+
+export default paymentsRouter;

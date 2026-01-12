@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import axios from 'axios'
 import UploadAttachment from '../components/UploadAttachment'
@@ -75,6 +75,8 @@ export default function OrderDetails() {
   const [autoEstimateRequested, setAutoEstimateRequested] = useState(false)
   const [estimateAction, setEstimateAction] = useState<string | null>(null)
   const [estimateError, setEstimateError] = useState<string | null>(null)
+  const role = auth.getRole?.() || ''
+  const canManageEstimate = ['admin', 'service_manager', 'provider'].includes(role)
 
   const fetchOrder = async () => {
     if (!id) return
@@ -192,17 +194,19 @@ export default function OrderDetails() {
   }
 
   useEffect(() => {
-    if (!order || estimate || autoEstimateRequested) return
+    if (!order || estimate || autoEstimateRequested || !canManageEstimate) return
     setAutoEstimateRequested(true)
     generateEstimate('auto')
-  }, [order, estimate, autoEstimateRequested])
+  }, [order, estimate, autoEstimateRequested, canManageEstimate])
 
   async function openReceipt() {
     if (!payment?.id) return
     setReceiptError(null)
     try {
-      const url = `/api/receipts/${payment.id}/file`
-      window.open(url, '_blank')
+      const res = await axios.get(`/api/receipts/${payment.id}/file`, { responseType: 'blob' })
+      const blobUrl = URL.createObjectURL(res.data)
+      window.open(blobUrl, '_blank')
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000)
     } catch (e: any) {
       setReceiptError(e?.response?.data?.error?.message || 'Failed to open receipt')
     }
@@ -399,17 +403,19 @@ export default function OrderDetails() {
                 Estimate total is 0. Recalculate to proceed with payment.
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <button
-                className="px-3 py-1 border rounded"
-                onClick={() => generateEstimate('manual')}
-                disabled={estimateAction === 'generating'}
-              >
-                {estimateAction === 'generating' ? 'Recalculating...' : 'Recalculate estimate'}
-              </button>
-              {estimateError && <div className="text-xs text-red-600">{estimateError}</div>}
-            </div>
-            {!estimateApproved && (
+            {canManageEstimate && (
+              <div className="flex items-center gap-2">
+                <button
+                  className="px-3 py-1 border rounded"
+                  onClick={() => generateEstimate('manual')}
+                  disabled={estimateAction === 'generating'}
+                >
+                  {estimateAction === 'generating' ? 'Recalculating...' : 'Recalculate estimate'}
+                </button>
+                {estimateError && <div className="text-xs text-red-600">{estimateError}</div>}
+              </div>
+            )}
+            {canManageEstimate && !estimateApproved && (
               <div className="flex items-center gap-2">
                 <button
                   className="px-3 py-1 border rounded"
@@ -423,18 +429,22 @@ export default function OrderDetails() {
           </div>
         ) : (
           <div className="text-sm text-gray-600">
-            Estimate is being prepared.
-            {estimateAction === 'auto' && <span className="ml-2">Auto-calculating...</span>}
-            {estimateError && <div className="text-xs text-red-600 mt-1">{estimateError}</div>}
-            <div className="mt-2">
-              <button
-                className="px-3 py-1 border rounded"
-                onClick={() => generateEstimate('manual')}
-                disabled={estimateAction === 'generating'}
-              >
-                {estimateAction === 'generating' ? 'Calculating...' : 'Generate estimate now'}
-              </button>
-            </div>
+            Estimate is being prepared by the service team.
+            {canManageEstimate && (
+              <>
+                {estimateAction === 'auto' && <span className="ml-2">Auto-calculating...</span>}
+                {estimateError && <div className="text-xs text-red-600 mt-1">{estimateError}</div>}
+                <div className="mt-2">
+                  <button
+                    className="px-3 py-1 border rounded"
+                    onClick={() => generateEstimate('manual')}
+                    disabled={estimateAction === 'generating'}
+                  >
+                    {estimateAction === 'generating' ? 'Calculating...' : 'Generate estimate now'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -469,8 +479,10 @@ export default function OrderDetails() {
             </button>
           </div>
         )}
-        {estimate && !estimateApproved && (
-          <div className="mt-2 text-xs text-gray-500">Approve the estimate to unlock payment.</div>
+        {estimate && !estimateApproved && !canManageEstimate && (
+          <div className="mt-2 text-xs text-gray-500">
+            Estimate must be approved by admin. Payment unlocks after approval.
+          </div>
         )}
       </div>
 
